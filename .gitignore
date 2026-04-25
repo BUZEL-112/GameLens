@@ -1,0 +1,43 @@
+# Data directories (populated at runtime)
+data/raw/
+data/processed/
+data/archive/
+data/user_snapshots/
+
+# Model artifacts (output of training)
+model_artifacts/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+*.egg
+dist/
+build/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment files
+.env
+
+# Jupyter
+.ipynb_checkpoints/
+
+# FAISS index (generated)
+*.faiss

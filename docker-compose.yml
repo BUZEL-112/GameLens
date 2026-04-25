@@ -1,0 +1,35 @@
+version: "3.9"
+
+services:
+
+  redis:
+    image: redis:7-alpine
+    container_name: game-rec-redis
+    ports:
+      - "6379:6379"
+    command: redis-server --maxmemory 2gb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+
+  api:
+    build:
+      context: .
+      dockerfile: recommendation_api/Dockerfile
+    container_name: game-rec-api
+    ports:
+      - "8000:8000"
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_DB=0
+      - REDIS_PASSWORD=
+      - ARTIFACTS_PATH=model_artifacts
+    volumes:
+      - ./model_artifacts:/app/model_artifacts:ro
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+volumes:
+  redis_data:
