@@ -1,0 +1,61 @@
+data_ingestion:
+  user_item_dataset_download_url: "https://mcauleylab.ucsd.edu/public_datasets/data/steam/australian_users_items.json.gz"
+  steam_game_dataset_download_url: "https://cseweb.ucsd.edu/~wckang/steam_games.json.gz"
+  raw_data_dir: "data/raw"
+
+data_cleaning:
+  raw_data_dir: "data/raw"
+  root_dir: "data/processed"
+  raw_files:
+    - "australian_users_items.json.gz"
+    - "steam_games.json.gz"
+
+feature_engineering:
+  root_dir: "data/processed"
+  cleaned_data_path: "data/processed/australian_users_items_merged.csv"
+  transformed_train_path: "data/processed/train.csv"
+  transformed_test_path: "data/processed/test.csv"
+  transformed_data_path: "data/processed/transformed_df.csv"
+
+training:
+  # Interaction processing
+  min_interaction: 0.01
+  neg_per_pos_hard: 2
+  neg_per_pos_random: 2
+  n_train_samples: 500000      # set to null to use all
+
+  # Item feature dimensions
+  num_genres: 20
+  num_tags: 300
+
+  # Model architecture
+  embedding_dim: 128
+  item_id_emb_dim: 32
+
+  # Training loop
+  epochs: 100
+  batch_size: 512
+  temperature: 0.1
+  lr_initial: 0.001
+  lr_floor: 0.00001
+
+evaluation:
+  test_fraction: 0.10
+  min_pos_per_user: 5
+  eval_threshold: 0.5
+  recall_k_values: [10, 20, 50, 100]
+  ndcg_k_values: [10, 20, 50]
+
+serving:
+  artifacts_path: "model_artifacts"
+  redis_host: "localhost"
+  redis_port: 6379
+  redis_db: 0
+  n_candidates: 100
+  max_genres_per_response: 3
+
+pipelines:
+  retrain_schedule: "weekly"
+  retention_days: 90
+  snapshot_dir: "data/user_snapshots"
+  archive_dir: "data/archive"
