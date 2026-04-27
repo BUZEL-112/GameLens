@@ -19,10 +19,14 @@ from recommendation_api.core.feature_store import FeatureStore
 
 class NearlineUpdater(threading.Thread):
 
-    UPDATE_INTERVAL = 5.0   # seconds between stream polls
-    STREAM_KEY = "events:stream"
-    BATCH_SIZE = 50         # events consumed per iteration
+    # UPDATE_INTERVAL = 5.0   # seconds between stream polls
+    # STREAM_KEY = "events:stream"
+    # BATCH_SIZE = 50         # events consumed per iteration
 
+    UPDATE_INTERVAL = 5.0
+    BLOCK_MS = 1500         # must stay under socket_timeout (2000 ms)
+    STREAM_KEY = "events:stream"
+    BATCH_SIZE = 50
     def __init__(self, fs: FeatureStore, retrieval_svc):
         super().__init__(daemon=True)
         self.fs = fs
@@ -43,12 +47,28 @@ class NearlineUpdater(threading.Thread):
     def stop(self):
         self._stop_event.set()
 
+    # def _consume_batch(self):
+    #     entries = self.fs.r.xread(
+    #         {self.STREAM_KEY: self._last_id},
+    #         count=self.BATCH_SIZE,
+    #         block=0,
+    #     )
+    #     if not entries:
+    #         return
+
+    #     _, messages = entries[0]
     def _consume_batch(self):
-        entries = self.fs.r.xread(
-            {self.STREAM_KEY: self._last_id},
-            count=self.BATCH_SIZE,
-            block=0,
-        )
+        try:
+            entries = self.fs.r.xread(
+                {self.STREAM_KEY: self._last_id},
+                count=self.BATCH_SIZE,
+                block=self.BLOCK_MS,   # <-- was block=0
+            )
+        except Exception:
+            # TimeoutError fires here when no events arrive within BLOCK_MS.
+            # That's expected — just return and let the loop retry.
+            return
+
         if not entries:
             return
 

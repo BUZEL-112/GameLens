@@ -58,3 +58,13 @@ async def get_similar_items(item_name: str, count: int = 10):
         item_name=item_name,
         similar_items=[SimilarItem(**s) for s in similar],
     )
+@router.get("/items/search")
+async def search_items(q: str, limit: int = 10):
+    """Discover exact item names in the vocab."""
+    from recommendation_api.main import retrieval_svc
+    q_lower = q.lower()
+    matches = [
+        name for name in retrieval_svc.item_vocab
+        if q_lower in name.lower()
+    ][:limit]
+    return {"query": q, "matches": matches}

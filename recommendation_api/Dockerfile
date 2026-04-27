@@ -1,21 +1,27 @@
-FROM python:3.11-slim
+# ---------- Builder stage ----------
+FROM python:3.11-slim AS builder
 
 WORKDIR /app
 
-# Install system dependencies for faiss
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python dependencies
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy API code
-COPY . .
+RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
 
-# Copy model artifacts (mounted or copied at build time)
-# In production, these would be fetched from cloud storage at startup.
+
+# ---------- Final stage ----------
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Copy only installed packages (no build tools)
+COPY --from=builder /install /usr/local
+
+# Copy only necessary app files
+COPY recommendation_api ./recommendation_api
 
 EXPOSE 8000
 

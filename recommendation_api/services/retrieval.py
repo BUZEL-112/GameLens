@@ -36,7 +36,33 @@ class RetrievalService:
         self.i_tower = tf.keras.models.load_model(f"{artifacts_path}/i_tower.keras")
         self.index = faiss.read_index(f"{artifacts_path}/item_index.faiss")
         print(f"RetrievalService ready -- {self.index.ntotal:,} items indexed")
+        # In RetrievalService.__init__, after loading artifacts:
 
+        # Normalized lookup: lowercase, stripped -> canonical name
+        self._name_index: dict[str, str] = {
+            name.lower().strip(): name
+            for name in self.item_vocab
+        }
+    def _resolve_name(self, item_name: str) -> str | None:
+        """
+        Try exact match first, then case-insensitive, then prefix match.
+        Returns the canonical vocab name or None.
+        """
+        if item_name in self.item_vocab:
+            return item_name
+        
+        normalized = item_name.lower().strip()
+        
+        # Case-insensitive exact
+        if normalized in self._name_index:
+            return self._name_index[normalized]
+        
+        # Prefix match — returns first hit
+        for key, canonical in self._name_index.items():
+            if key.startswith(normalized):
+                return canonical
+        
+        return None
     def get_user_embedding(self, user_id: str) -> Optional[np.ndarray]:
         # Fast path: cached embedding
         emb = self.fs.get_user_embedding(user_id)
@@ -72,18 +98,43 @@ class RetrievalService:
             if int(i) in self.idx_to_name
         ]
 
-    def retrieve_similar_items(
-        self, item_name: str, top_k: int = 10
-    ) -> list[dict]:
-        # Try cache first
-        cached = self.fs.get_similar_items(item_name)
+    # def retrieve_similar_items(
+    #     self, item_name: str, top_k: int = 10
+    # ) -> list[dict]:
+    #     # Try cache first
+    #     cached = self.fs.get_similar_items(item_name)
+    #     if cached:
+    #         return cached[:top_k]
+
+    #     if item_name not in self.item_vocab:
+    #         return []
+
+    #     item_emb = self.fs.get_item_embedding(item_name)
+    #     if item_emb is None:
+    #         return []
+
+    #     query = np.ascontiguousarray(item_emb.reshape(1, -1), dtype=np.float32)
+    #     scores, indices = self.index.search(query, top_k + 1)
+    #     results = [
+    #         {"item_name": self.idx_to_name[int(i)], "score": float(s)}
+    #         for i, s in zip(indices[0], scores[0])
+    #         if int(i) in self.idx_to_name
+    #         and self.idx_to_name[int(i)] != item_name
+    #     ][:top_k]
+
+    #     # Cache for next time
+    #     self.fs.set_similar_items(item_name, results)
+    #     return results
+    def retrieve_similar_items(self, item_name: str, top_k: int = 10) -> list[dict]:
+        canonical = self._resolve_name(item_name)
+        if canonical is None:
+            return []
+
+        cached = self.fs.get_similar_items(canonical)
         if cached:
             return cached[:top_k]
 
-        if item_name not in self.item_vocab:
-            return []
-
-        item_emb = self.fs.get_item_embedding(item_name)
+        item_emb = self.fs.get_item_embedding(canonical)
         if item_emb is None:
             return []
 
@@ -93,9 +144,8 @@ class RetrievalService:
             {"item_name": self.idx_to_name[int(i)], "score": float(s)}
             for i, s in zip(indices[0], scores[0])
             if int(i) in self.idx_to_name
-            and self.idx_to_name[int(i)] != item_name
+            and self.idx_to_name[int(i)] != canonical
         ][:top_k]
 
-        # Cache for next time
-        self.fs.set_similar_items(item_name, results)
+        self.fs.set_similar_items(canonical, results)
         return results

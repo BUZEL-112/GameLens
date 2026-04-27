@@ -41,3 +41,4 @@ Thumbs.db
 
 # FAISS index (generated)
 *.faiss
+test.ipynb
