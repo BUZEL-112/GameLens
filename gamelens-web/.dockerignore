@@ -1,0 +1,8 @@
+node_modules
+.next
+.env.local
+.env*.local
+public/images/*
+!public/images/.gitkeep
+.git
+*.md

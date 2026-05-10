@@ -29,6 +29,28 @@ services:
       - ./model_artifacts:/app/model_artifacts:ro
     depends_on:
       - redis
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+
+  web:
+    build:
+      context: ./gamelens-web
+      dockerfile: Dockerfile
+    container_name: game-rec-web
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+    volumes:
+      - ./steam_header:/app/public/images:ro
+    depends_on:
+      api:
+        condition: service_healthy
     restart: unless-stopped
 
 volumes:

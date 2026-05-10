@@ -1,0 +1,2 @@
+# This directory is the mount point for scraped Steam header images.
+# Left empty in version control -- images are mounted via Docker volume.

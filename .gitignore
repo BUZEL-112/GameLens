@@ -6,7 +6,7 @@ data/user_snapshots/
 
 # Model artifacts (output of training)
 model_artifacts/
-
+stitch_api_game_store/
 # Python
 __pycache__/
 *.py[cod]

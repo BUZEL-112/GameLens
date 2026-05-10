@@ -1,0 +1,420 @@
+@import "tailwindcss";
+
+/* ── Stitch Design System — Nexus Store ──────────────────────────────────── */
+@theme {
+  /* Surface scale */
+  --color-surface: #131313;
+  --color-surface-dim: #131313;
+  --color-surface-bright: #393939;
+  --color-surface-container-lowest: #0e0e0e;
+  --color-surface-container-low: #1c1b1b;
+  --color-surface-container: #201f1f;
+  --color-surface-container-high: #2a2a2a;
+  --color-surface-container-highest: #353534;
+  --color-surface-variant: #353534;
+
+  /* On-surface */
+  --color-on-surface: #e5e2e1;
+  --color-on-surface-variant: #bfc8d0;
+
+  /* Primary (Steam teal) */
+  --color-primary: #a1d9ff;
+  --color-primary-container: #66c0f4;
+  --color-on-primary: #00344b;
+  --color-primary-fixed-dim: #82cfff;
+
+  /* Secondary (Action green) */
+  --color-secondary: #bae72d;
+  --color-on-secondary: #283500;
+  --color-secondary-container: #9fcb00;
+  --color-secondary-fixed-dim: #aad615;
+
+  /* Tertiary */
+  --color-tertiary: #c6d3e9;
+  --color-on-tertiary: #243142;
+
+  /* Outline */
+  --color-outline: #89929a;
+  --color-outline-variant: #3f484f;
+
+  /* Semantic */
+  --color-error: #ffb4ab;
+
+  /* Glass surface (used via CSS class, not Tailwind token) */
+  --glass-bg: rgba(27, 40, 56, 0.6);
+  --glass-blur: 16px;
+  --glass-border: rgba(255, 255, 255, 0.1);
+
+  /* Font */
+  --font-sans: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
+
+  /* Spacing */
+  --spacing-xs: 4px;
+  --spacing-sm: 12px;
+  --spacing-md: 24px;
+  --spacing-lg: 48px;
+  --spacing-xl: 80px;
+  --spacing-gutter: 24px;
+}
+
+/* ── Base ─────────────────────────────────────────────────────────────────── */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html {
+  color-scheme: dark;
+  scroll-behavior: smooth;
+}
+
+body {
+  background-color: var(--color-surface);
+  color: var(--color-on-surface);
+  font-family: var(--font-sans);
+  line-height: 1.6;
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow-x: hidden;
+}
+
+a {
+  color: var(--color-primary);
+  text-decoration: none;
+  transition: color 0.15s ease;
+}
+
+a:hover {
+  color: var(--color-primary-fixed-dim);
+}
+
+/* ── Scrollbar ────────────────────────────────────────────────────────────── */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: var(--color-surface-container-lowest);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-outline-variant);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-outline);
+}
+
+/* ── Glass Surface ────────────────────────────────────────────────────────── */
+.glass {
+  background: var(--glass-bg);
+  backdrop-filter: blur(var(--glass-blur));
+  border: 1px solid var(--glass-border);
+}
+
+/* ── Navbar (top bar) ─────────────────────────────────────────────────────── */
+.navbar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 80px;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 2rem;
+  background: rgba(15, 23, 42, 0.6);
+  backdrop-filter: blur(20px);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.4);
+}
+
+/* ── Sidebar ──────────────────────────────────────────────────────────────── */
+.sidebar {
+  position: fixed;
+  top: 80px;
+  left: 0;
+  width: 240px;
+  height: calc(100vh - 80px);
+  display: flex;
+  flex-direction: column;
+  padding: 1rem;
+  background: rgba(8, 15, 24, 0.5);
+  backdrop-filter: blur(16px);
+  border-right: 1px solid rgba(255, 255, 255, 0.05);
+  overflow-y: auto;
+  z-index: 50;
+}
+
+.sidebar-link {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem 1rem;
+  border-radius: 0.5rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #64748b;
+  text-decoration: none;
+  transition: all 0.2s ease;
+}
+
+.sidebar-link:hover {
+  color: #e2e8f0;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.sidebar-link.active {
+  color: var(--color-secondary);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+/* ── Main Content ─────────────────────────────────────────────────────────── */
+.main-content {
+  margin-left: 240px;
+  margin-top: 80px;
+  min-height: calc(100vh - 80px);
+  padding: 24px;
+}
+
+/* ── Hero Section ─────────────────────────────────────────────────────────── */
+.hero-gradient {
+  background: linear-gradient(to top, var(--color-surface) 0%, rgba(19, 19, 19, 0) 100%);
+}
+
+/* ── Game Card ────────────────────────────────────────────────────────────── */
+.game-card {
+  position: relative;
+  cursor: pointer;
+  border-radius: 0.75rem;
+  overflow: hidden;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  transition: transform 0.25s ease, box-shadow 0.25s ease, border-color 0.25s ease;
+}
+
+.game-card:hover {
+  transform: scale(1.025);
+  box-shadow: 0 0 24px rgba(161, 217, 255, 0.12);
+  border-color: rgba(161, 217, 255, 0.25);
+}
+
+/* ── Bento Cards ──────────────────────────────────────────────────────────── */
+.bento-card {
+  position: relative;
+  border-radius: 0.75rem;
+  overflow: hidden;
+  transition: transform 0.25s ease, box-shadow 0.25s ease;
+}
+
+.bento-card:hover {
+  transform: scale(1.01);
+  box-shadow: 0 0 20px rgba(161, 217, 255, 0.1);
+}
+
+/* ── Genre Chip ───────────────────────────────────────────────────────────── */
+.genre-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.2rem 0.6rem;
+  border-radius: 9999px;
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  background: rgba(27, 40, 56, 0.8);
+  color: var(--color-primary);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.genre-chip.active {
+  background: var(--color-secondary);
+  color: var(--color-on-secondary);
+  border-color: transparent;
+}
+
+/* ── Action Button ────────────────────────────────────────────────────────── */
+.btn-primary {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.75rem 2rem;
+  border-radius: 0.5rem;
+  font-weight: 700;
+  font-size: 0.875rem;
+  background: var(--color-secondary);
+  color: var(--color-on-secondary);
+  border: none;
+  cursor: pointer;
+  transition: filter 0.15s ease, transform 0.1s ease;
+}
+
+.btn-primary:hover {
+  filter: brightness(1.1);
+}
+
+.btn-primary:active {
+  transform: scale(0.97);
+}
+
+.btn-glass {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.75rem 2rem;
+  border-radius: 0.5rem;
+  font-weight: 700;
+  font-size: 0.875rem;
+  background: var(--glass-bg);
+  backdrop-filter: blur(var(--glass-blur));
+  color: white;
+  border: 1px solid var(--glass-border);
+  cursor: pointer;
+  transition: background 0.15s ease, transform 0.1s ease;
+}
+
+.btn-glass:hover {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+.btn-glass:active {
+  transform: scale(0.97);
+}
+
+/* ── Badge ────────────────────────────────────────────────────────────────── */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.15rem 0.5rem;
+  border-radius: 0.25rem;
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+}
+
+/* ── Skeleton ─────────────────────────────────────────────────────────────── */
+@keyframes skeleton-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+.skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--color-surface-container) 25%,
+    var(--color-surface-container-high) 50%,
+    var(--color-surface-container) 75%
+  );
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.8s ease-in-out infinite;
+  border-radius: 0.5rem;
+}
+
+/* ── Scroll Row ───────────────────────────────────────────────────────────── */
+.scroll-row {
+  display: flex;
+  gap: 1rem;
+  overflow-x: auto;
+  padding-bottom: 0.75rem;
+  scroll-snap-type: x mandatory;
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.scroll-row::-webkit-scrollbar {
+  display: none;
+}
+
+.scroll-row > * {
+  scroll-snap-align: start;
+  flex-shrink: 0;
+}
+
+/* ── Page Fade In ─────────────────────────────────────────────────────────── */
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(14px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.page-enter {
+  animation: fade-up 0.35s ease-out;
+}
+
+/* ── Search Input ─────────────────────────────────────────────────────────── */
+.search-input {
+  width: 100%;
+  padding: 0.5rem 1rem 0.5rem 2.5rem;
+  border-radius: 9999px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: var(--color-on-surface);
+  font-size: 0.875rem;
+  outline: none;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.search-input::placeholder {
+  color: #64748b;
+}
+
+.search-input:focus {
+  border-color: var(--color-primary-container);
+  box-shadow: 0 0 0 2px rgba(102, 192, 244, 0.15);
+}
+
+/* ── Section heading ──────────────────────────────────────────────────────── */
+.section-title {
+  font-size: 2rem;
+  font-weight: 700;
+  line-height: 1.2;
+  color: white;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+/* ── Footer ───────────────────────────────────────────────────────────────── */
+.footer {
+  margin-left: 240px;
+  padding: 1.5rem 3rem;
+  background: #000;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-family: "Inter", monospace;
+  font-size: 0.75rem;
+}
+
+/* ── Responsive: hide sidebar on mobile ───────────────────────────────────── */
+@media (max-width: 768px) {
+  .sidebar {
+    display: none;
+  }
+  .main-content {
+    margin-left: 0;
+  }
+  .footer {
+    margin-left: 0;
+  }
+  .hide-mobile {
+    display: none !important;
+  }
+}
+
+/* ── Game detail hero: full bleed from sidebar edge ──────────────────────── */
+.detail-hero-wrapper {
+  margin-left: 240px;
+  margin-top: 80px;
+}
+
+@media (max-width: 768px) {
+  .detail-hero-wrapper {
+    margin-left: 0;
+  }
+}
