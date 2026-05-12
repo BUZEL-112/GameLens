@@ -43,25 +43,41 @@ class RetrievalService:
             name.lower().strip(): name
             for name in self.item_vocab
         }
+    # def _resolve_name(self, item_name: str) -> str | None:
+    #     """
+    #     Try exact match first, then case-insensitive, then prefix match.
+    #     Returns the canonical vocab name or None.
+    #     """
+    #     if item_name in self.item_vocab:
+    #         return item_name
+        
+    #     normalized = item_name.lower().strip()
+        
+    #     # Case-insensitive exact
+    #     if normalized in self._name_index:
+    #         return self._name_index[normalized]
+        
+    #     # Prefix match — returns first hit
+    #     for key, canonical in self._name_index.items():
+    #         if key.startswith(normalized):
+    #             return canonical
+        
+    #     return None
+
     def _resolve_name(self, item_name: str) -> str | None:
-        """
-        Try exact match first, then case-insensitive, then prefix match.
-        Returns the canonical vocab name or None.
-        """
         if item_name in self.item_vocab:
             return item_name
-        
+
         normalized = item_name.lower().strip()
-        
-        # Case-insensitive exact
+
         if normalized in self._name_index:
             return self._name_index[normalized]
-        
-        # Prefix match — returns first hit
+
+        # Substring match in both directions
         for key, canonical in self._name_index.items():
-            if key.startswith(normalized):
+            if key in normalized or normalized in key:
                 return canonical
-        
+
         return None
     def get_user_embedding(self, user_id: str) -> Optional[np.ndarray]:
         # Fast path: cached embedding

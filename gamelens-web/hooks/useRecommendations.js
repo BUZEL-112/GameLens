@@ -1,9 +1,5 @@
 import { useState, useEffect } from "react";
 
-/**
- * Fetch personalized recommendations for a user.
- * Returns empty state if userId is null (SSR or not yet initialized).
- */
 export function useRecommendations(userId, count = 10) {
   const [recommendations, setRecommendations] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -16,18 +12,27 @@ export function useRecommendations(userId, count = 10) {
     setError(null);
 
     const base = process.env.NEXT_PUBLIC_REC_API_URL || "/rec";
-    const url = `${base}/v1/recommendations?user_id=${encodeURIComponent(userId)}&count=${count}`;
 
-    fetch(url)
-      .then((res) => {
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        return res.json();
-      })
-      .then((data) => {
-        setRecommendations(data.recommendations || []);
+    Promise.all([
+      fetch(`${base}/v1/recommendations?user_id=${encodeURIComponent(userId)}&count=${count}`)
+        .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); }),
+      fetch(`/api/games?all=true`)
+        .then(r => r.json())
+    ])
+      .then(([recData, gamesData]) => {
+        // Build a lookup map by app_name
+        const lookup = {};
+        for (const g of gamesData.games || []) lookup[g.app_name] = g;
+
+        // Enrich: match item_name -> full game object
+        const enriched = (recData.recommendations || [])
+          .map(r => lookup[r.item_name])
+          .filter(Boolean);
+
+        setRecommendations(enriched);
         setLoading(false);
       })
-      .catch((err) => {
+      .catch(err => {
         console.error("[useRecommendations]", err.message);
         setError(err.message);
         setLoading(false);
