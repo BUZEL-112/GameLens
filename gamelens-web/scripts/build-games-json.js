@@ -1,29 +1,26 @@
 /**
  * build-games-json.js
  *
- * One-time data preparation script. Runs on the host machine (not in Docker).
- * Reads steam_games.json.gz and produces a clean JSON array at data/games.json.
- *
- * Usage:
- *   node gamelens-web/scripts/build-games-json.js
+ * One-time data preparation script.
+ * Reads steam_games.json and produces a clean JSON array at data/games.json.
  */
 
 const fs = require("fs");
 const path = require("path");
-const zlib = require("zlib");
 const readline = require("readline");
 
-const RAW_PATH = path.resolve(__dirname, "../../data/raw/steam_games.json.gz");
+const RAW_PATH = path.resolve(__dirname, "../../data/raw/steam_games.json");
 const OUTPUT_PATH = path.resolve(__dirname, "../data/games.json");
 
 /**
  * Sanitize a game name to produce the image filename.
- * Mirrors the Python scraper's sanitize_filename() exactly.
+ * Removes characters that are illegal in filenames or specifically 
+ * excluded in your sample (like apostrophes).
  */
 function sanitize(name) {
   if (name == null) return "__unknown__";
   return String(name)
-    .replace(/[\\/*?:"<>|]/g, "")
+    .replace(/[\\/*?:"<>|']/g, "") // Added ' to the exclusion list
     .trim();
 }
 
@@ -31,11 +28,18 @@ function sanitize(name) {
  * Normalize price values into a consistent format.
  */
 function normalizePrice(price) {
-  if (price == null || price === "") return null;
+  if (price == null || price === "") return "Free";
   const s = String(price).trim().toLowerCase();
-  if (s === "free to play" || s === "free") return "Free";
+  
+  // Handle various "Free" strings
+  if (["free to play", "free", "free demo", "play for free"].includes(s)) {
+    return "Free";
+  }
+
+  // Extract numeric value
   const num = parseFloat(s.replace(/[$,]/g, ""));
   if (!isNaN(num)) return num;
+  
   return s;
 }
 
@@ -49,14 +53,12 @@ function ensureArray(val) {
 async function main() {
   if (!fs.existsSync(RAW_PATH)) {
     console.error(`[ERROR] Raw data file not found at: ${RAW_PATH}`);
-    console.error("Make sure steam_games.json.gz exists in data/raw/");
     process.exit(1);
   }
 
   console.log(`Reading ${RAW_PATH}...`);
 
-  const gunzip = zlib.createGunzip();
-  const stream = fs.createReadStream(RAW_PATH).pipe(gunzip);
+  const stream = fs.createReadStream(RAW_PATH);
   const rl = readline.createInterface({ input: stream, crlfDelay: Infinity });
 
   const games = [];
@@ -71,14 +73,15 @@ async function main() {
     try {
       const entry = JSON.parse(trimmed);
 
+      // Your sample output requires an app_name and an id
       const appName = entry.app_name || entry.title || null;
-      if (!appName) {
-        errorCount++;
-        continue;
+      if (!appName || !entry.id) {
+        continue; 
       }
 
+      // Construct the object in the exact order of your sample
       games.push({
-        id: entry.id || null,
+        id: String(entry.id),
         app_name: appName,
         genres: ensureArray(entry.genres),
         tags: ensureArray(entry.tags),
@@ -95,7 +98,7 @@ async function main() {
     }
   }
 
-  // Sort alphabetically by app_name
+  // Sort by app_name to match your desired structure
   games.sort((a, b) => a.app_name.localeCompare(b.app_name));
 
   // Ensure output directory exists
@@ -104,13 +107,14 @@ async function main() {
     fs.mkdirSync(outDir, { recursive: true });
   }
 
-  fs.writeFileSync(OUTPUT_PATH, JSON.stringify(games, null, 0));
+  // Use null, 2 to create the pretty-printed array format you requested
+  fs.writeFileSync(OUTPUT_PATH, JSON.stringify(games, null, 2));
 
   console.log(`Done.`);
-  console.log(`  Lines read:    ${lineCount}`);
-  console.log(`  Games written: ${games.length}`);
-  console.log(`  Errors:        ${errorCount}`);
-  console.log(`  Output:        ${OUTPUT_PATH}`);
+  console.log(`  Lines read:     ${lineCount}`);
+  console.log(`  Games written:  ${games.length}`);
+  console.log(`  Errors:         ${errorCount}`);
+  console.log(`  Output:         ${OUTPUT_PATH}`);
 }
 
 main().catch((err) => {
