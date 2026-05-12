@@ -1,5 +1,5 @@
 # Data directories (populated at runtime)
-data/raw/
+
 data/processed/
 data/archive/
 data/user_snapshots/
