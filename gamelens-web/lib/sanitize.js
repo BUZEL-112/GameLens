@@ -8,6 +8,6 @@
 export function sanitize(name) {
   if (name == null) return "__unknown__";
   return String(name)
-    .replace(/[\\/*?:"<>|]/g, "")
+    .replace(/[\\/*?:"<>|'%]/g, "") // Added % to the list
     .trim();
 }

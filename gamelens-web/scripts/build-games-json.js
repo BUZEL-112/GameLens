@@ -20,7 +20,7 @@ const OUTPUT_PATH = path.resolve(__dirname, "../data/games.json");
 function sanitize(name) {
   if (name == null) return "__unknown__";
   return String(name)
-    .replace(/[\\/*?:"<>|']/g, "") // Added ' to the exclusion list
+    .replace(/[\\/*?:"<>|'%]/g, "") // Added % to the list
     .trim();
 }
 

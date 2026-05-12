@@ -17,7 +17,9 @@ export async function getStaticPaths() {
 }
 
 export async function getStaticProps({ params }) {
-  const game = getGame(decodeURIComponent(params.app_name));
+  // FIX: Remove decodeURIComponent. Next.js already provides the decoded value.
+  const game = getGame(params.app_name); 
+  
   if (!game) return { notFound: true };
   return { props: { game } };
 }
