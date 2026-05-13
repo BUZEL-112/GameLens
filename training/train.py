@@ -1,6 +1,20 @@
 """
 Training Entry Point
 
+This module orchestrates the end-to-end training pipeline for the Two-Tower recommendation system.
+It covers everything from data acquisition to model artifact generation.
+
+The pipeline follows these steps:
+1. Setup: Loads configurations and initializes the output directory for model artifacts.
+2. Data Preparation: Runs Ingestion, Cleaning, and Feature Engineering services.
+3. Component Processing:
+   - Stage 1-3: Separates items/users and builds vocabulary-based feature matrices.
+   - Stage 4-5: Generates training pairs (positive and negative) and converts them to tensors.
+4. Model Training: Builds the Dual-Tower architecture and executes the contrastive training loop.
+5. Embedding Extraction: Uses the trained Item Tower to generate latent vectors for all games.
+6. Indexing & Similarity: Builds a FAISS index for fast retrieval and pre-computes an item-to-item similarity table.
+7. Persistence: Saves all models, weights, indexes, and metadata required for the serving API.
+
 Usage:
     cd game_recommender
     python -m training.train
@@ -19,6 +33,7 @@ import faiss
 import numpy as np
 import pandas as pd
 
+# Internal module imports for data handling and modeling
 from training.utils.utils import load_config
 from training.utils.logger import logger
 from training.data_ingestion import LoadDataService
@@ -36,13 +51,19 @@ from training.pipeline import (
 
 
 def main(config_path: str = "configs/config.yaml", skip_download: bool = False):
+    """
+    Main execution logic for the training pipeline.
+    """
     t_start = time.perf_counter()
+    
+    # ── Phase 1: Configuration & Setup ────────────────────────────────────────
     config = load_config(config_path)
     train_cfg = config.get("training", {})
     save_dir = config.get("serving", {}).get("artifacts_path", "model_artifacts")
     os.makedirs(save_dir, exist_ok=True)
 
-    # ── Phase A: Data Preparation ─────────────────────────────────────────────
+    # ── Phase 2: Data Preparation ─────────────────────────────────────────────
+    # These services ensure the local 'data/' directory is populated with model-ready CSVs
     if not skip_download:
         logger.info("=== Data Ingestion ===")
         LoadDataService(config_path).run()
@@ -53,16 +74,18 @@ def main(config_path: str = "configs/config.yaml", skip_download: bool = False):
     logger.info("=== Feature Engineering ===")
     FeatureEngineeringService(config_path).run()
 
-    # ── Phase B: Load Processed Data ──────────────────────────────────────────
+    # ── Phase 3: Load Transformed Data ────────────────────────────────────────
     feat_cfg = config.get("feature_engineering", {})
     transformed_path = feat_cfg.get("transformed_data_path", "data/processed/transformed_df.csv")
     logger.info(f"Loading transformed data from {transformed_path}")
     df = pd.read_csv(transformed_path)
 
-    # ── Phase C: Pipeline Stages 1-6 ─────────────────────────────────────────
+    # ── Phase 4: Pipeline Stages 1-6 ─────────────────────────────────────────
+    # Stage 1: Separate the consolidated dataframe into unique items and user interactions
     logger.info("=== Stage 1: Splitting sides ===")
     items_df, interactions_df = stage1_split_sides(df)
 
+    # Stage 2: Build item vocabulary and content matrix (genres/tags)
     logger.info("=== Stage 2: Processing items ===")
     item_data = stage2_process_items(
         items_df,
@@ -70,6 +93,7 @@ def main(config_path: str = "configs/config.yaml", skip_download: bool = False):
         num_tags=train_cfg.get("num_tags", 300),
     )
 
+    # Stage 3: Aggregate user history into fixed-length feature vectors
     logger.info("=== Stage 3: Processing users ===")
     all_user_vectors = stage3_process_users(
         interactions_df,
@@ -77,6 +101,7 @@ def main(config_path: str = "configs/config.yaml", skip_download: bool = False):
         item_data["item_vocab"],
     )
 
+    # Stage 4: Sample positive interactions and generate synthetic negative samples
     logger.info("=== Stage 4: Building training pairs ===")
     train_samples = stage4_build_training_pairs(
         interactions_df,
@@ -89,10 +114,12 @@ def main(config_path: str = "configs/config.yaml", skip_download: bool = False):
         min_interaction=train_cfg.get("min_interaction", 0.01),
     )
 
+    # Resolve architectural dimensions
     user_feat_dim = next(iter(all_user_vectors.values())).shape[0]
     embedding_dim = train_cfg.get("embedding_dim", 128)
     item_content_dim = item_data["item_content_matrix"].shape[1]
 
+    # Stage 5: Convert Python lists/dicts into high-performance TensorFlow tensors
     logger.info("=== Stage 5: Assembling tensors ===")
     tensors = stage5_assemble_tensors(
         train_samples,
@@ -103,6 +130,7 @@ def main(config_path: str = "configs/config.yaml", skip_download: bool = False):
         n_train=train_cfg.get("n_train_samples"),
     )
 
+    # ── Phase 5: Model Construction & Training ────────────────────────────────
     logger.info("=== Building towers ===")
     u_tower = build_user_tower(user_feat_dim, embedding_dim)
     i_tower = build_item_tower(
@@ -114,6 +142,7 @@ def main(config_path: str = "configs/config.yaml", skip_download: bool = False):
     u_tower.summary(print_fn=logger.info)
     i_tower.summary(print_fn=logger.info)
 
+    # Stage 6: Execute the gradient descent loop with Contrastive Loss
     logger.info("=== Stage 6: Training ===")
     history = stage6_train_loop(
         u_tower, i_tower, tensors,
@@ -124,7 +153,8 @@ def main(config_path: str = "configs/config.yaml", skip_download: bool = False):
         lr_floor=train_cfg.get("lr_floor", 1e-5),
     )
 
-    # ── Phase D: Extract Embeddings & Build FAISS Index ────────────────────────
+    # ── Phase 6: Embedding Extraction & FAISS Indexing ───────────────────────
+    # Generate embeddings for the entire item catalog to enable fast retrieval
     logger.info("=== Extracting item embeddings ===")
     num_items = item_data["num_items"]
     all_item_ids = np.arange(num_items, dtype=np.int32).reshape(-1, 1)
@@ -142,14 +172,15 @@ def main(config_path: str = "configs/config.yaml", skip_download: bool = False):
 
     logger.info(f"Item embeddings shape: {item_embeddings.shape}")
 
-    # FAISS index
+    # Build FAISS Index (Inner Product for Cosine Similarity since vectors are normalized)
     d = embedding_dim
     item_emb_f32 = np.ascontiguousarray(item_embeddings, dtype=np.float32)
     index = faiss.IndexFlatIP(d)
     index.add(item_emb_f32)
     logger.info(f"FAISS index built — {index.ntotal:,} items")
 
-    # Pre-compute similarity table
+    # ── Phase 7: Similarity Table Pre-computation ────────────────────────────
+    # Generate a static lookup table for "Similar Games" features
     logger.info("Pre-computing similarity table...")
     idx_to_name = item_data["idx_to_name"]
     similarity_table = {}
@@ -162,13 +193,15 @@ def main(config_path: str = "configs/config.yaml", skip_download: bool = False):
             item_name = idx_to_name.get(item_idx)
             if item_name is None:
                 continue
+            # Store top 10 neighbors (excluding self)
             similarity_table[item_name] = [
                 {"item_name": idx_to_name[int(i)], "score": float(s)}
                 for i, s in zip(idxs, scs)
                 if int(i) in idx_to_name and int(i) != item_idx
             ][:10]
 
-    # ── Phase E: Save Artifacts ───────────────────────────────────────────────
+    # ── Phase 8: Artifact Persistence ────────────────────────────────────────
+    # Save all files required by the Recommendation API
     logger.info(f"=== Saving artifacts to {save_dir}/ ===")
 
     u_tower.save(f"{save_dir}/u_tower.keras")
@@ -183,6 +216,7 @@ def main(config_path: str = "configs/config.yaml", skip_download: bool = False):
     faiss.write_index(index, f"{save_dir}/item_index.faiss")
     logger.info(f"  FAISS index saved ({index.ntotal:,} items)")
 
+    # Metadata and Vocabularies
     artifacts = {
         "item_vocab": item_data["item_vocab"],
         "genre_vocab": item_data["genre_vocab"],
@@ -202,11 +236,11 @@ def main(config_path: str = "configs/config.yaml", skip_download: bool = False):
         pickle.dump(similarity_table, f, protocol=pickle.HIGHEST_PROTOCOL)
     logger.info(f"  Similarity table saved ({len(similarity_table):,} items)")
 
-    # Save training history
+    # Training telemetry
     with open(f"{save_dir}/training_history.pkl", "wb") as f:
         pickle.dump(history, f)
 
-    # File manifest
+    # Output a manifest of all saved files
     total_bytes = 0
     logger.info(f"\n{save_dir}/")
     for fname in sorted(os.listdir(save_dir)):
