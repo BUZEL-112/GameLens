@@ -1,0 +1,9 @@
+data/
+model_artifacts/
+.git/
+gamelens-web/node_modules/
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.DS_Store

@@ -50,7 +50,7 @@ from training.pipeline import (
 )
 
 
-def main(config_path: str = "configs/config.yaml", skip_download: bool = False):
+def main(config_path: str = "configs/config.yaml", skip_download: bool = False, frac_dat: bool = True):
     """
     Main execution logic for the training pipeline.
     """
@@ -62,6 +62,15 @@ def main(config_path: str = "configs/config.yaml", skip_download: bool = False):
     save_dir = config.get("serving", {}).get("artifacts_path", "model_artifacts")
     os.makedirs(save_dir, exist_ok=True)
 
+    # Global Seeding for Reproducibility
+    random_seed = train_cfg.get("random_seed", 42)
+    import random
+    import tensorflow as tf
+    random.seed(random_seed)
+    np.random.seed(random_seed)
+    tf.random.set_seed(random_seed)
+    logger.info(f"Global random seed set to {random_seed}")
+
     # ── Phase 2: Data Preparation ─────────────────────────────────────────────
     # These services ensure the local 'data/' directory is populated with model-ready CSVs
     if not skip_download:
@@ -72,7 +81,7 @@ def main(config_path: str = "configs/config.yaml", skip_download: bool = False):
     CleanDataService(config_path).run()
 
     logger.info("=== Feature Engineering ===")
-    FeatureEngineeringService(config_path).run()
+    _, sampling_stats = FeatureEngineeringService(config_path, frac_dat=frac_dat).run()
 
     # ── Phase 3: Load Transformed Data ────────────────────────────────────────
     feat_cfg = config.get("feature_engineering", {})
@@ -242,13 +251,55 @@ def main(config_path: str = "configs/config.yaml", skip_download: bool = False):
 
     # Output a manifest of all saved files
     total_bytes = 0
+    import hashlib
+    import json
+    from datetime import datetime
+
+    def compute_md5(file_path):
+        hasher = hashlib.md5()
+        with open(file_path, 'rb') as f:
+            buf = f.read(65536)
+            while len(buf) > 0:
+                hasher.update(buf)
+                buf = f.read(65536)
+        return hasher.hexdigest()
+
+    version_tag = f"v{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+
     logger.info(f"\n{save_dir}/")
+    checksums = {}
     for fname in sorted(os.listdir(save_dir)):
         fpath = os.path.join(save_dir, fname)
-        size = os.path.getsize(fpath)
-        total_bytes += size
-        logger.info(f"  {fname:<35}  {size / 1e6:>7.2f} MB")
+        if os.path.isfile(fpath):
+            size = os.path.getsize(fpath)
+            total_bytes += size
+            checksums[fname] = compute_md5(fpath)
+            logger.info(f"  {fname:<35}  {size / 1e6:>7.2f} MB")
     logger.info(f"  {'TOTAL':<35}  {total_bytes / 1e6:>7.2f} MB")
+
+    # ── Write Training Manifest ───────────────────────────────────────────────
+    manifest = {
+        "timestamp": time.time(),
+        "version_tag": version_tag,
+        "sampling": {
+            "random_seed": random_seed,
+            "max_interactions_per_user": train_cfg.get("max_interactions_per_user"),
+            "sample_fraction": train_cfg.get("sample_fraction"),
+            "note": "Time-aware sampling (.tail(N)) relies on inherent chronological order."
+        },
+        "row_counts": sampling_stats,
+        "item_embeddings_path": f"{save_dir}/item_embeddings.npy",
+        "artifacts_path": f"{save_dir}/artifacts.pkl",
+        "similarity_table_path": f"{save_dir}/similarity_table.pkl",
+        "checksums": checksums
+    }
+
+    manifest_dir = config.get("orchestration", {}).get("manifest_dir", "model_artifacts/manifests")
+    os.makedirs(manifest_dir, exist_ok=True)
+    with open(os.path.join(manifest_dir, "training_manifest.json"), "w") as f:
+        json.dump(manifest, f, indent=2)
+
+    logger.info(f"Training manifest written for version: {version_tag}")
 
     elapsed = time.perf_counter() - t_start
     logger.info(f"\nTraining pipeline completed in {elapsed:.1f}s")
@@ -263,5 +314,9 @@ if __name__ == "__main__":
         "--skip-download", action="store_true",
         help="Skip data download (assumes raw data already exists)",
     )
+    parser.add_argument(
+        "--disable-sampling", action="store_false", dest="frac_dat",
+        help="Disable 10% data sampling (use full dataset)",
+    )
     args = parser.parse_args()
-    main(config_path=args.config, skip_download=args.skip_download)
+    main(config_path=args.config, skip_download=args.skip_download, frac_dat=args.frac_dat)

@@ -25,16 +25,19 @@ services:
       - REDIS_DB=0
       - REDIS_PASSWORD=
       - ARTIFACTS_PATH=model_artifacts
+      - API_KEY=${API_KEY:-dev-insecure-key}
     volumes:
       - ./model_artifacts:/app/model_artifacts:ro
     depends_on:
       - redis
+    # NOTE: Redis must be populated before the first `docker-compose up`.
+    # Run `python -m scripts.init_redis` after `docker-compose up redis`.
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request; print(urllib.request.urlopen('http://localhost:8000/health').read())\""]
       interval: 10s
       timeout: 5s
-      retries: 3
-      start_period: 30s
+      retries: 5
+      start_period: 120s
     restart: unless-stopped
 
   web:
@@ -46,6 +49,7 @@ services:
       - "3000:3000"
     environment:
       - NODE_ENV=production
+      - API_KEY=${API_KEY:-dev-insecure-key}
     volumes:
       - ./steam_header:/app/public/images:ro
     depends_on:

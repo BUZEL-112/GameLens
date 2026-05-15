@@ -9,8 +9,9 @@ from __future__ import annotations
 
 import time
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
+from recommendation_api.core.security import events_rate_limit
 from recommendation_api.models.schemas import (
     EventResponse,
     SimilarItem,
@@ -22,7 +23,10 @@ router = APIRouter(prefix="/v1", tags=["events"])
 
 
 @router.post("/events", response_model=EventResponse, status_code=202)
-async def record_event(event: UserEventRequest):
+async def record_event(
+    event: UserEventRequest,
+    _: None = Depends(events_rate_limit),
+):
     """
     Record a user interaction. Returns 202 immediately -- processing is async.
     The NearlineUpdater refreshes the user's embedding within seconds.
@@ -45,6 +49,18 @@ async def record_event(event: UserEventRequest):
     return EventResponse(status="queued", timestamp=time.time())
 
 
+@router.get("/items/search")
+async def search_items(q: str, limit: int = 10):
+    """Discover exact item names in the vocab."""
+    from recommendation_api.main import retrieval_svc
+    q_lower = q.lower()
+    matches = [
+        name for name in retrieval_svc.item_vocab
+        if q_lower in name.lower()
+    ][:limit]
+    return {"query": q, "matches": matches}
+
+
 @router.get("/items/{item_name}/similar", response_model=SimilarItemsResponse)
 async def get_similar_items(item_name: str, count: int = 10):
     """Retrieve the top-N most similar games to the given game."""
@@ -58,13 +74,3 @@ async def get_similar_items(item_name: str, count: int = 10):
         item_name=item_name,
         similar_items=[SimilarItem(**s) for s in similar],
     )
-@router.get("/items/search")
-async def search_items(q: str, limit: int = 10):
-    """Discover exact item names in the vocab."""
-    from recommendation_api.main import retrieval_svc
-    q_lower = q.lower()
-    matches = [
-        name for name in retrieval_svc.item_vocab
-        if q_lower in name.lower()
-    ][:limit]
-    return {"query": q, "matches": matches}

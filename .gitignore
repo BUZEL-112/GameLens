@@ -42,3 +42,6 @@ Thumbs.db
 # FAISS index (generated)
 *.faiss
 test.ipynb
+
+
+model_artifacts.zip

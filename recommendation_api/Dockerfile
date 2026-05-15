@@ -22,11 +22,9 @@ COPY --from=builder /install /usr/local
 
 # Copy only necessary app files
 COPY recommendation_api ./recommendation_api
+COPY core_ml ./core_ml
 
-COPY training ./training
 COPY configs ./configs
-COPY data ./data
-COPY model_artifacts ./model_artifacts
 
 EXPOSE 8000
 

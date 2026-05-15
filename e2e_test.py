@@ -125,6 +125,9 @@ def check_api_endpoints() -> bool:
         test_app.include_router(events.router)
 
         client = TestClient(test_app, raise_server_exceptions=False)
+        # Attach the API key to every request so the middleware accepts them
+        api_key = os.environ.get("API_KEY", "dev-insecure-key")
+        headers = {"X-API-Key": api_key}
         all_ok = True
 
         # Pick a test user
@@ -132,7 +135,8 @@ def check_api_endpoints() -> bool:
 
         # Test 1: Personalized recommendations
         resp = client.get("/v1/recommendations",
-                          params={"user_id": test_uid, "count": 5})
+                          params={"user_id": test_uid, "count": 5},
+                          headers=headers)
         ok = resp.status_code == 200
         print(f"  GET /v1/recommendations         : {resp.status_code}  {'OK' if ok else 'FAIL'}")
         if ok:
@@ -142,7 +146,8 @@ def check_api_endpoints() -> bool:
 
         # Test 2: Cold-start user
         resp2 = client.get("/v1/recommendations",
-                           params={"user_id": "nonexistent_user_xyz", "count": 5})
+                           params={"user_id": "nonexistent_user_xyz", "count": 5},
+                           headers=headers)
         ok2 = resp2.status_code == 200
         print(f"  GET /v1/recommendations (cold)  : {resp2.status_code}  {'OK' if ok2 else 'FAIL'}")
         if ok2:
@@ -151,7 +156,8 @@ def check_api_endpoints() -> bool:
 
         # Test 3: Item-to-item similarity
         resp3 = client.get("/v1/items/Counter-Strike/similar",
-                           params={"count": 5})
+                           params={"count": 5},
+                           headers=headers)
         ok3 = resp3.status_code in (200, 404)
         print(f"  GET /v1/items/.../similar        : {resp3.status_code}  {'OK' if ok3 else 'FAIL'}")
         all_ok = all_ok and ok3
@@ -162,7 +168,7 @@ def check_api_endpoints() -> bool:
             "item_name": "Counter-Strike",
             "event_type": "playtime",
             "playtime": 45.0,
-        })
+        }, headers=headers)
         ok4 = resp4.status_code == 202
         print(f"  POST /v1/events                  : {resp4.status_code}  {'OK' if ok4 else 'FAIL'}")
         all_ok = all_ok and ok4

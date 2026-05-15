@@ -144,6 +144,36 @@ class FeatureStore:
         raw = self.r.get("model:version")
         return raw.decode() if raw else "unknown"
 
+    # ── Readiness sentinel ────────────────────────────────────────────────────
+
+    SENTINEL_KEY = "system:ready"
+
+    def set_ready_sentinel(self, model_version: str):
+        """
+        Write the readiness sentinel after a successful Redis population.
+        Stores the model version and a UTC timestamp so operators can audit
+        when Redis was last fully populated and from which training run.
+        """
+        import json
+        from datetime import datetime, timezone
+
+        payload = json.dumps({
+            "model_version": model_version,
+            "populated_at": datetime.now(timezone.utc).isoformat(),
+        })
+        self.r.set(self.SENTINEL_KEY, payload.encode())
+
+    def check_ready_sentinel(self) -> dict | None:
+        """
+        Returns the sentinel payload if Redis has been populated, else None.
+        """
+        import json
+
+        raw = self.r.get(self.SENTINEL_KEY)
+        if raw is None:
+            return None
+        return json.loads(raw)
+
     # ── Event stream ──────────────────────────────────────────────────────────
 
     def push_event(

@@ -125,6 +125,21 @@ def main(config_path: str = "configs/config.yaml"):
 
     except RuntimeError as e:
         logger.warning(f"Redis not available — skipping: {e}")
+        raise  # Re-raise so the orchestrator knows the task failed
+
+    manifest = {
+        "timestamp": time.time(),
+        "date": today,
+        "events_archived": len(events_df) if 'events_df' in locals() else 0,
+        "users_snapshotted": user_count if 'user_count' in locals() else 0,
+        "archive_path": parquet_path if 'parquet_path' in locals() else None,
+        "snapshot_path": snapshot_path if 'snapshot_path' in locals() else None
+    }
+    
+    manifest_dir = config.get("orchestration", {}).get("manifest_dir", "model_artifacts/manifests")
+    os.makedirs(manifest_dir, exist_ok=True)
+    with open(os.path.join(manifest_dir, "retention_manifest.json"), "w") as f:
+        json.dump(manifest, f, indent=2)
 
     logger.info("Data retention pipeline complete.")
 

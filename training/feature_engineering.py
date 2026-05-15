@@ -11,6 +11,7 @@ It follows these steps:
 6. Feature Synthesis: Creates an 'item_text' column by merging genres and tags for content-based analysis.
 7. Sampling: Reduces dataset size (10% sample) to optimize training performance.
 8. Data Splitting & Export: Splits the data into 80/20 train/test sets and saves all transformed files.
+Note: By default, this service samples only 10% of the data to reduce training time for demonstrations. To use the full dataset, set 'frac_dat=False' in the class constructor.
 """
 
 import os
@@ -26,13 +27,16 @@ from training.utils.exception import CustomException
 from training.utils.logger import logger
 from training.utils.utils import load_config
 
+# Shared feature functions — same logic used by the nearline API at serving time
+from core_ml.features import safe_parse, flatten_to_string
+
 
 class FeatureEngineeringService:
     """
     Service class for performing feature engineering on the cleaned dataset.
     """
 
-    def __init__(self, config_path: str = str(Path("configs/config.yaml"))):
+    def __init__(self, config_path: str = str(Path("configs/config.yaml")), frac_dat:bool= True):
         """
         Initializes the service by loading paths for input data and output artifacts.
         """
@@ -76,38 +80,11 @@ class FeatureEngineeringService:
             df["playtime"] = df["playtime"].fillna(0).astype(int)
             df["rating"] = np.log1p(df["playtime"])
 
-            # --- Step 2: List Sanitization Helper ---
-            def fix_list(x):
-                """
-                Standardizes genre and tag entries into clean lists.
-                Handles actual lists, string-represented lists, and malformed strings.
-                """
-                if isinstance(x, list):
-                    return x
-                if pd.isna(x):
-                    return []
-                if isinstance(x, str):
-                    # Clean up HTML entities and try to evaluate as a Python list
-                    x = x.replace("&amp;", "&")
-                    try:
-                        return ast.literal_eval(x)
-                    except (ValueError, SyntaxError):
-                        # Fallback for plain strings
-                        return [x]
-                return [str(x)]
-
-            # --- Step 3: Process Genres and Tags ---
-            # Convert raw list-like data into flat, comma-separated strings
-            df["genres_1"] = (
-                df["genres"]
-                .apply(fix_list)
-                .apply(lambda lst: ", ".join(lst) if isinstance(lst, list) else "")
-            )
-            df["tags_1"] = (
-                df["tags"]
-                .apply(fix_list)
-                .apply(lambda lst: ", ".join(lst) if isinstance(lst, list) else "")
-            )
+            # --- Step 2: List Sanitization and Text Formatting ---
+            # Use shared safe_parse (same function used by the serving API).
+            # fix_list() was a local duplicate — it is now removed.
+            df["genres_1"] = df["genres"].apply(flatten_to_string)
+            df["tags_1"] = df["tags"].apply(flatten_to_string)
 
             # Cleanup: Replace old columns with cleaned versions and remove raw title
             df.drop(columns=["genres", "tags"], inplace=True)
@@ -116,23 +93,27 @@ class FeatureEngineeringService:
             if "title" in df.columns:
                 df.drop(columns="title", inplace=True)
 
-            # --- Step 4: Create 'item_text' for Content Features ---
-            # Combines text features into a single searchable/embeddable field
-            df["item_text"] = (
-                (
-                    df["genres"].fillna("").str.replace(",", " ")
-                    + " "
-                    + df["tags"].fillna("").str.replace(",", " ")
-                )
-                .str.lower()
-                .str.strip()
-            )
-            # Filter out records with no descriptive text
-            df = df[df["item_text"] != ""]
-            
-            # --- Step 5: Sampling and Persistence ---
-            # Sub-sample to 10% for faster iteration during model development
-            df = df.sample(frac=0.1)
+
+            # --- Step : Sampling and Persistence ---
+            # Retrieve training configurations for deterministic sampling
+            train_cfg = self.config.get("training", {})
+            random_seed = train_cfg.get("random_seed", 42)
+            max_interactions = train_cfg.get("max_interactions_per_user", 20)
+            sample_fraction = train_cfg.get("sample_fraction", 0.1)
+
+            raw_rows = len(df)
+
+            # Time-aware sampling proxy: keep only the most recent N interactions per user
+            # This relies on the chronological ordering of the input dataset.
+            self.logger.info(f"Applying time-aware windowing: keeping latest {max_interactions} interactions per user.")
+            df = df.groupby("user_id").tail(max_interactions).reset_index(drop=True)
+
+            after_tail_rows = len(df)
+
+            # Sub-sample for faster iteration during model development
+            if frac_dat:
+                self.logger.info(f"Randomly sampling {sample_fraction * 100}% of data with seed {random_seed}.")
+                df = df.sample(frac=sample_fraction, random_state=random_seed)
             
             # Ensure the output directory exists
             os.makedirs(os.path.dirname(self.transformed_data_path), exist_ok=True)
@@ -141,9 +122,9 @@ class FeatureEngineeringService:
             df.to_csv(self.transformed_data_path, index=False)
             self.logger.info(f"Transformed data saved to {self.transformed_data_path}")
 
-            # --- Step 6: Train/Test Split ---
+            # --- Step : Train/Test Split ---
             # Divide into training and validation sets (80/20)
-            train_df, test_df = train_test_split(df, test_size=0.2, random_state=42)
+            train_df, test_df = train_test_split(df, test_size=0.2, random_state=random_seed)
             
             # Save individual splits
             train_df.to_csv(self.transformed_train_path, index=False)
@@ -153,7 +134,14 @@ class FeatureEngineeringService:
             self.logger.info(f"Test data saved to {self.transformed_test_path}")
             self.logger.info("Feature engineering completed successfully.")
             
-            return self.transformed_data_path
+            stats = {
+                "raw_rows": raw_rows,
+                "after_tail_rows": after_tail_rows,
+                "after_sampling_rows": len(df),
+                "train_split_size": len(train_df),
+                "test_split_size": len(test_df)
+            }
+            return self.transformed_data_path, stats
 
         except Exception as e:
             # Propagate error with custom context

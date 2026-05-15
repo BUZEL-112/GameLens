@@ -18,6 +18,13 @@ feature_engineering:
   transformed_data_path: "data/processed/transformed_df.csv"
 
 training:
+  # Randomness
+  random_seed: 42
+
+  # Data Windowing and Sampling
+  max_interactions_per_user: 20
+  sample_fraction: 0.1
+
   # Interaction processing
   min_interaction: 0.01
   neg_per_pos_hard: 2
@@ -45,6 +52,13 @@ evaluation:
   eval_threshold: 0.5
   recall_k_values: [10, 20, 50, 100]
   ndcg_k_values: [10, 20, 50]
+  # Deployment Gate Thresholds
+  min_recall_20: 0.15
+  min_ndcg_20: 0.05
+
+orchestration:
+  manifest_dir: "model_artifacts/manifests"
+
 
 serving:
   artifacts_path: "model_artifacts"

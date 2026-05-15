@@ -1,18 +1,18 @@
 """
 Training Pipeline — Stages 1 through 6
 
-Converts a merged CSV of user-item interactions into trained Two-Tower
-embeddings.  Each stage is a standalone function that takes explicit inputs
-and returns explicit outputs so they can be composed, tested, or re-run
-individually.
+This module provides the core functional blocks for the Two-Tower model training pipeline.
+It transforms a consolidated interaction dataset into high-dimensional latent embeddings.
 
-Stages:
-    1. split_sides        — Separate items_df and interactions_df
-    2. process_items      — Build item vocab, genre/tag vocab, content matrix
-    3. process_users      — Aggregate user feature vectors (322-dim)
-    4. build_training_pairs — Positives + hard/random negatives
-    5. assemble_tensors   — Numpy arrays ready for training
-    6. train_loop         — InfoNCE with cosine LR decay
+The pipeline execution logic is broken into six distinct stages:
+1. Side Splitting: Separates the 'item' features (metadata) from 'user' interaction records.
+2. Item Processing: Builds vocabularies and a multi-hot content matrix for genres and tags.
+3. User Processing: Synthesizes 322-dim user vectors representing weighted historical interests.
+4. Pair Construction: Samples positive user-item pairs and generates synthetic hard and random negatives.
+5. Tensor Assembly: Packages data into high-performance NumPy arrays ready for the TensorFlow engine.
+6. Training Loop: Executes deep learning with InfoNCE loss, in-batch negatives, and cosine LR decay.
+
+Each stage is designed as a standalone function for improved testability and modularity.
 """
 
 from __future__ import annotations
@@ -26,23 +26,11 @@ import pandas as pd
 import tensorflow as tf
 
 from training.utils.logger import logger
+from core_ml.features import safe_parse, build_user_vector, normalize_user_matrix
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-def safe_parse(val) -> list:
-    """Safely parse list-like columns that may be stored as strings."""
-    if isinstance(val, list):
-        return val
-    if isinstance(val, str):
-        try:
-            parsed = ast.literal_eval(val)
-            return parsed if isinstance(parsed, list) else []
-        except (ValueError, SyntaxError):
-            return []
-    return []
+# safe_parse is imported from core_ml.features — it is the canonical implementation
+# shared with the serving API. Do not redefine it here.
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -51,27 +39,29 @@ def safe_parse(val) -> list:
 
 def stage1_split_sides(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     """
-    Split the merged dataframe into:
-      - items_df:        unique items with genres/tags  (LEFT side — what a game IS)
-      - interactions_df: user-item interaction records  (RIGHT side — who a user IS)
+    Decouples the unified dataset into a catalog of unique items and a table of user interactions.
 
-    The incoming ``df`` must already have an ``interaction`` column
-    (normalised log-playtime).  If it only has ``playtime``, this function
-    creates the interaction column.
+    Step 1: Normalize engagement scores (interaction) based on log-playtime.
+    Step 2: Extract unique item metadata (genres, tags).
+    Step 3: Clean and isolate user interaction records (user_id, item_name, interaction).
     """
-    # Create interaction column if missing
+    # Ensure interaction scores are calculated and normalized
     if "interaction" not in df.columns:
         logger.info("Creating 'interaction' column from playtime...")
         df = df.copy()
         df["playtime"] = pd.to_numeric(df["playtime"], errors="coerce")
         df = df.dropna(subset=["playtime"])
         df = df.drop_duplicates(subset=["user_id", "item_id"])
+        
+        # log1p transformation dampens the effect of extreme playtime outliers
         df["log_playtime"] = np.log1p(df["playtime"])
+        
+        # Normalize interactions per-user so active/inactive users are on a comparable scale (0-5)
         df["max_log_playtime"] = df.groupby("user_id")["log_playtime"].transform("max")
         df["interaction"] = (df["log_playtime"] / df["max_log_playtime"]) * 5
         df = df.drop(columns=["log_playtime", "max_log_playtime"])
 
-    # --- LEFT: Item features ---
+    # --- LEFT side: Unique Item Features ---
     items_df = (
         df[["item_id", "item_name", "genres", "tags"]]
         .drop_duplicates(subset=["item_id"])
@@ -80,7 +70,7 @@ def stage1_split_sides(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     items_df["genres"] = items_df["genres"].apply(safe_parse)
     items_df["tags"] = items_df["tags"].apply(safe_parse)
 
-    # --- RIGHT: User interaction records ---
+    # --- RIGHT side: User-Item Interaction Map ---
     interactions_df = (
         df[["user_id", "item_name", "interaction"]]
         .dropna(subset=["user_id", "item_name", "interaction"])
@@ -107,35 +97,35 @@ def stage2_process_items(
     num_tags: int = 300,
 ) -> dict[str, Any]:
     """
-    Build item vocabulary, genre/tag vocabularies, and multi-hot content matrix.
+    Builds indices and sparse matrices representing the game catalog.
 
-    Returns a dict with keys:
-        item_vocab, genre_vocab, tag_vocab, idx_to_name,
-        item_content_matrix, num_items, items_df (de-duped on item_name)
+    Step 1: Create a unified Item Vocabulary based on item names.
+    Step 2: Generate frequency-based vocabularies for Genres and Tags.
+    Step 3: Construct a multi-hot content matrix for all games.
     """
-    # De-duplicate on item_name (the join key used everywhere)
+    # Standardize on item_name as the primary join key
     items_df = items_df.drop_duplicates(subset=["item_name"]).reset_index(drop=True)
 
     item_vocab = {name: idx for idx, name in enumerate(items_df["item_name"])}
     idx_to_name = {v: k for k, v in item_vocab.items()}
     num_items = len(item_vocab)
 
-    # Genre vocabulary (top N by frequency)
+    # Restrict Genre and Tag features to top-N most frequent to reduce dimensionality
     all_genres = [g for genres in items_df["genres"] for g in genres]
     genre_vocab = {
         g: i for i, (g, _) in enumerate(Counter(all_genres).most_common(num_genres))
     }
 
-    # Tag vocabulary (top N by frequency)
     all_tags = [t for tags in items_df["tags"] for t in tags]
     tag_vocab = {
         t: i for i, (t, _) in enumerate(Counter(all_tags).most_common(num_tags))
     }
 
-    # Build multi-hot content matrix
+    # Initialize matrices for multi-hot encoding
     genre_matrix = np.zeros((num_items, num_genres), dtype=np.float32)
     tag_matrix = np.zeros((num_items, num_tags), dtype=np.float32)
 
+    # Populate matrices based on game metadata
     for _, row in items_df.iterrows():
         idx = item_vocab[row["item_name"]]
         for g in row["genres"]:
@@ -145,6 +135,7 @@ def stage2_process_items(
             if t in tag_vocab:
                 tag_matrix[idx, tag_vocab[t]] = 1.0
 
+    # Concatenate genre and tag flags into a single content vector per item
     item_content_matrix = np.hstack([genre_matrix, tag_matrix])
 
     content_dim = num_genres + num_tags
@@ -175,54 +166,26 @@ def stage3_process_users(
     item_vocab: dict[str, int],
 ) -> dict[str, np.ndarray]:
     """
-    Aggregate each user's interaction history into a single 322-dim vector.
+    Summarizes user behavior into a fixed-length 322-dimensional feature vector.
 
-    Vector layout: [weighted_avg_content(320) | total_interaction_norm(1) | num_games_norm(1)]
+    Layout:
+    - [0-319]: Weighted average of item content vectors from the user's history.
+    - [320]:   Normalized total interaction score (volume of play).
+    - [321]:   Normalized total number of games played (diversity of play).
 
-    Returns dict mapping user_id -> ndarray of shape (322,).
+    Delegates to core_ml.features.build_user_vector() for the per-user
+    computation, ensuring mathematical parity with the nearline updater.
     """
-    feat_dim = item_content_matrix.shape[1]
-
-    def _get_user_features(user_history: pd.DataFrame) -> np.ndarray:
-        valid = [
-            (item_vocab[name], weight)
-            for name, weight in zip(user_history["item_name"], user_history["interaction"])
-            if name in item_vocab and weight > 0
-        ]
-        if not valid:
-            return np.zeros(feat_dim + 2, dtype=np.float32)
-
-        indices, weights = zip(*valid)
-        weights = np.array(weights, dtype=np.float32)
-        vecs = item_content_matrix[list(indices)]
-
-        history_vec = (vecs * weights[:, None]).sum(axis=0) / (weights.sum() + 1e-9)
-        total_interaction = float(weights.sum())
-        num_games = float(len(valid))
-
-        return np.concatenate([history_vec, [total_interaction, num_games]]).astype(
-            np.float32
-        )
-
     logger.info("Precomputing user vectors...")
-    all_user_vectors: dict[str, np.ndarray] = {}
+    raw_vectors: dict[str, np.ndarray] = {}
     for uid, group in interactions_df.groupby("user_id", sort=False):
-        all_user_vectors[uid] = _get_user_features(group)
-    logger.info(f"  {len(all_user_vectors):,} users cached.")
+        raw_vectors[uid] = build_user_vector(group, item_content_matrix, item_vocab)
+    logger.info(f"  {len(raw_vectors):,} users cached.")
 
-    # Globally normalise the 2 stat dimensions
-    user_ids_list = list(all_user_vectors.keys())
-    user_matrix = np.stack([all_user_vectors[uid] for uid in user_ids_list])
+    # Apply global max normalization across all users (corpus-level, training-time only)
+    all_user_vectors = normalize_user_matrix(raw_vectors)
 
-    max_total = user_matrix[:, -2].max() + 1e-9
-    max_ngames = user_matrix[:, -1].max() + 1e-9
-    user_matrix[:, -2] /= max_total
-    user_matrix[:, -1] /= max_ngames
-
-    for i, uid in enumerate(user_ids_list):
-        all_user_vectors[uid] = user_matrix[i]
-
-    user_feat_dim = user_matrix.shape[1]
+    user_feat_dim = next(iter(all_user_vectors.values())).shape[0]
     logger.info(f"Stage 3 done — USER_FEAT_DIM = {user_feat_dim}")
 
     return all_user_vectors
@@ -238,14 +201,22 @@ def _sample_hard_negatives(
     num_items: int,
     n: int = 4,
 ) -> np.ndarray:
-    """Find items with similar content to what the user plays but hasn't played."""
+    """
+    Finds 'Hard Negatives'—items that look like what the user plays but haven't been played.
+    These are critical for teaching the model to distinguish between general interest and specific choices.
+    """
     if not played_indices:
         return np.random.randint(0, num_items, size=n)
 
+    # Compute the user's preference centroid based on played content
     user_centroid = item_content_matrix[played_indices].mean(axis=0)
+    
+    # Score all items by cosine similarity to the centroid
     all_scores = item_content_matrix @ user_centroid
+    # Mask out items already played
     all_scores[played_indices] = -np.inf
 
+    # Pick top scoring non-played items
     top_k = min(50, num_items - len(played_indices))
     top_k = max(top_k, n)
     top_idx = np.argsort(all_scores)[::-1][:top_k]
@@ -263,7 +234,11 @@ def stage4_build_training_pairs(
     min_interaction: float = 0.01,
 ) -> pd.DataFrame:
     """
-    Build (user, item, label, weight) training samples with hard + random negatives.
+    Generates the final training dataset using a triplet-like sampling strategy.
+
+    For each positive interaction, we sample:
+    1. Hard Negatives: Games with similar genres/tags that were NOT played.
+    2. Random Negatives: Arbitrary games from the catalog to provide baseline contrast.
     """
     all_item_arr = np.array(list(item_vocab.keys()))
 
@@ -271,6 +246,7 @@ def stage4_build_training_pairs(
     neg_rows = []
 
     for uid, group in interactions_df.groupby("user_id", sort=False):
+        # Identify confirmed likes
         pos = group[group["interaction"] > min_interaction]
         if len(pos) == 0:
             continue
@@ -278,14 +254,14 @@ def stage4_build_training_pairs(
         played_names = set(group["item_name"].tolist())
         played_idx = [item_vocab[n] for n in played_names if n in item_vocab]
 
-        # Positives
+        # Record Positives (Label 1)
         pos_rows.extend(
             (uid, name, 1, float(w))
             for name, w in zip(pos["item_name"], pos["interaction"])
             if name in item_vocab
         )
 
-        # Hard negatives
+        # Record Hard Negatives (Label 0)
         hard_idx = _sample_hard_negatives(
             played_idx, item_content_matrix, num_items,
             n=len(pos) * neg_per_pos_hard,
@@ -296,7 +272,7 @@ def stage4_build_training_pairs(
             if i in idx_to_name and idx_to_name[i] not in played_names
         )
 
-        # Random negatives
+        # Record Random 'Easy' Negatives (Label 0)
         oversample = min(
             len(pos) * neg_per_pos_random + len(played_names) + 100, num_items
         )
@@ -306,6 +282,7 @@ def stage4_build_training_pairs(
         ]
         neg_rows.extend((uid, name, 0, 1.0) for name in rand_neg)
 
+    # Combine and shuffle for stochastic gradient descent
     cols = ["user_id", "item_name", "label", "weight"]
     train_samples = pd.DataFrame(pos_rows + neg_rows, columns=cols)
     train_samples = train_samples.sample(frac=1, random_state=42).reset_index(drop=True)
@@ -332,21 +309,21 @@ def stage5_assemble_tensors(
     n_train: int | None = 500_000,
 ) -> dict[str, np.ndarray]:
     """
-    Convert training samples into numpy arrays suitable for the training loop.
-
-    Returns dict with keys:
-        y, weights, user_feat, item_ids, item_feat
+    Formats sampled pairs into structured NumPy arrays for the TensorFlow training loop.
+    This stage avoids expensive lookups during training by pre-assembling all necessary vectors.
     """
     ts = train_samples.iloc[:n_train] if n_train else train_samples
 
     y = ts["label"].to_numpy(dtype=np.float32)
     weights = ts["weight"].to_numpy(dtype=np.float32)
 
+    # Retrieve precomputed user vectors
     _zero_user = np.zeros(user_feat_dim, dtype=np.float32)
     user_feat = np.stack(
         [all_user_vectors.get(uid, _zero_user) for uid in ts["user_id"]],
     ).astype(np.float32)
 
+    # Retrieve item IDs and their corresponding content features
     item_ids = np.array(
         [item_vocab.get(name, 0) for name in ts["item_name"]], dtype=np.int32
     )
@@ -381,12 +358,12 @@ def stage6_train_loop(
     lr_floor: float = 1e-5,
 ) -> dict[str, list[float]]:
     """
-    Train with in-batch negatives (InfoNCE loss).
+    Optimizes tower weights using in-batch contrastive learning (InfoNCE).
 
-    Uses only positive pairs -- every other item in the batch serves as
-    a negative for each user (B-1 free negatives per sample).
-
-    Returns training history dict with keys: loss, pos_score, neg_score.
+    Logic:
+    - Every positive User-Item pair in a batch is treated as the 'target'.
+    - Every OTHER item in that same batch acts as a negative sample for that user.
+    - InfoNCE maximizes the similarity of the true pair while minimizing similarity to batch-negatives.
     """
     y = tensors["y"]
     w = tensors["weights"]
@@ -394,7 +371,7 @@ def stage6_train_loop(
     ii = tensors["item_ids"]
     if_ = tensors["item_feat"]
 
-    # Extract positive pairs only
+    # Filter for positive interactions only (standard approach for InfoNCE)
     pos_mask = y == 1
     uf_pos = uf[pos_mask]
     ii_pos = ii[pos_mask]
@@ -404,6 +381,7 @@ def stage6_train_loop(
     n_pos = len(uf_pos)
     num_batches = n_pos // batch_size
 
+    # Cosine learning rate decay for stable convergence
     lr_schedule = tf.keras.optimizers.schedules.CosineDecay(
         initial_learning_rate=lr_initial,
         decay_steps=num_batches * epochs,
@@ -419,6 +397,7 @@ def stage6_train_loop(
     history: dict[str, list[float]] = {"loss": [], "pos_score": [], "neg_score": []}
 
     for epoch in range(epochs):
+        # Shuffle positives each epoch
         idx = np.random.permutation(n_pos)
         uf_s = uf_pos[idx]
         ii_s = ii_pos[idx]
@@ -439,23 +418,29 @@ def stage6_train_loop(
             w_b = tf.cast(w_s[start:end], tf.float32)
 
             with tf.GradientTape() as tape:
+                # Forward pass through both towers
                 u_emb = u_tower(u_b, training=True)
                 i_emb = i_tower([i_id_b, i_b], training=True)
 
+                # Compute Similarity Matrix (Batch x Batch)
+                # Diagonal = Positive pairs; Off-diagonal = Negative pairs
                 sim_matrix = tf.matmul(u_emb, i_emb, transpose_b=True) / temperature
                 labels_matrix = tf.eye(B)
+                
+                # Cross-entropy objective for multi-class classification (target = diagonal)
                 row_loss = tf.keras.losses.categorical_crossentropy(
                     labels_matrix, sim_matrix, from_logits=True
                 )
                 loss = tf.reduce_mean(row_loss * w_b)
 
+            # Backpropagation
             grads = tape.gradient(loss, all_vars)
             optimizer.apply_gradients(zip(grads, all_vars))
             epoch_loss += float(loss)
 
         avg_loss = epoch_loss / max(num_batches, 1)
 
-        # Probe scores on a mixed pos+neg sample
+        # Performance Monitoring: Score a fixed probe batch to track embedding quality
         probe = min(2_000, len(y))
         u_p = u_tower(uf[:probe], training=False)
         i_p = i_tower([ii[:probe].reshape(-1, 1), if_[:probe]], training=False)

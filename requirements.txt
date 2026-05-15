@@ -30,3 +30,4 @@ pyarrow>=14.0
 # Testing
 httpx>=0.27
 pytest>=8.0
+prefect
