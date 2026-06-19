@@ -70,7 +70,7 @@ The API's startup sequence checks for a `system:ready` key written at the end of
 The fast path uses pre-built demo artifacts and skips training entirely.
 
 ```bash
-git clone <repo> && cd gamelens
+git clone https://github.com/BUZEL-112/GameLens.git && cd GameLens
 pip install -r requirements.txt
 make setup-api          # downloads demo artifacts, starts Redis (~5 min)
 make test               # parity + smoke tests against the live API
