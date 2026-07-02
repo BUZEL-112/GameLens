@@ -51,6 +51,7 @@ class FeatureEngineeringService:
             self.transformed_train_path = feat_cfg.get("transformed_train_path")
             self.transformed_test_path = feat_cfg.get("transformed_test_path")
             self.transformed_data_path = feat_cfg.get("transformed_data_path")
+            self.frac_dat = frac_dat
 
         except Exception as e:
             raise CustomException(e)
@@ -111,7 +112,7 @@ class FeatureEngineeringService:
             after_tail_rows = len(df)
 
             # Sub-sample for faster iteration during model development
-            if frac_dat:
+            if self.frac_dat:
                 self.logger.info(f"Randomly sampling {sample_fraction * 100}% of data with seed {random_seed}.")
                 df = df.sample(frac=sample_fraction, random_state=random_seed)
             

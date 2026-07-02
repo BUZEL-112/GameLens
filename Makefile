@@ -1,4 +1,4 @@
-.PHONY: help setup-api setup-frontend setup-ml test run-pipeline
+.PHONY: help setup-api setup-frontend setup-ml up test test-unit test-api test-training run-pipeline
 
 # ── Default target ─────────────────────────────────────────────────────────────
 help:
@@ -13,7 +13,11 @@ help:
 	@echo "  make setup-ml        ML engineer           — 30-45 min, full training"
 	@echo ""
 	@echo "Other targets:"
+	@echo "  make up              Start the full stack (redis + api + web) via Docker Compose"
 	@echo "  make test            Run the end-to-end test suite against a live API"
+	@echo "  make test-unit       Run all unit tests (no Docker required)"
+	@echo "  make test-api        Run API router unit tests only"
+	@echo "  make test-training   Run training pipeline unit tests only"
 	@echo "  make run-pipeline    Execute the Prefect retraining DAG"
 	@echo "  make redis-up        Start Redis only"
 	@echo "  make redis-down      Stop all containers"
@@ -43,6 +47,33 @@ setup-frontend: setup-api
 	@echo "Starting GameLens web frontend..."
 	cd gamelens-web && npm install && npm run dev
 
+# ── Full stack: Docker Compose (redis + api + web) ────────────────────────────
+# Brings up the entire production-like stack in detached mode.
+# Sequence:
+#   1. Download model_artifacts if missing.
+#   2. Start Redis and wait for it to be ready.
+#   3. Populate Redis (writes the system:ready sentinel the API checks on boot).
+#   4. Bring up the api and web services (web waits for the api healthcheck).
+# Target state: http://localhost:3000 is live, backed by http://localhost:8000.
+up: _download-artifacts
+	@echo "Starting Redis..."
+	docker-compose up -d redis
+	@echo "Waiting for Redis to be ready..."
+	@sleep 3
+	@echo "Populating Redis from model_artifacts/..."
+	python -m scripts.init_redis
+	@echo "Starting API and web services..."
+	docker-compose up -d api web
+	@echo ""
+	@echo "Stack is up. Services:"
+	@echo "  Web UI:  http://localhost:3000"
+	@echo "  API:     http://localhost:8000"
+	@echo "  Docs:    http://localhost:8000/docs"
+	@echo "  Health:  http://localhost:8000/health"
+	@echo ""
+	@echo "Run 'make test' to validate all endpoints."
+	@echo "Run 'docker-compose down' (or 'make redis-down') to stop everything."
+
 # ── Full path: ML / Training engineer ─────────────────────────────────────────
 # Runs the full training pipeline: data download, cleaning, training, evaluation.
 # Requires ~8GB RAM. Recommend a machine with a GPU for reasonable training time.
@@ -52,7 +83,7 @@ setup-ml:
 	@echo ""
 	@echo "Starting full training pipeline..."
 	@echo "  This will download ~1GB of raw data and train for 30-45 minutes."
-	python -m training.train
+	python -m training.train 
 	@echo ""
 	@echo "Running offline evaluation..."
 	python -m training.evaluate
@@ -67,8 +98,19 @@ redis-down:
 init-redis:
 	python -m scripts.init_redis
 
+# End-to-end tests (requires a running API + Redis)
 test:
 	python e2e_test.py
+
+# Unit tests -- no external services required
+test-unit:
+	python -m pytest tests/api tests/training -v --tb=short
+
+test-api:
+	python -m pytest tests/api -v --tb=short
+
+test-training:
+	python -m pytest tests/training -v --tb=short
 
 run-pipeline:
 	@echo "Running Prefect orchestrator..."
