@@ -16,6 +16,7 @@ services:
     build:
       context: .
       dockerfile: recommendation_api/Dockerfile
+      network: host
     container_name: game-rec-api
     ports:
       - "8000:8000"
@@ -44,6 +45,7 @@ services:
     build:
       context: ./gamelens-web
       dockerfile: Dockerfile
+      network: host
     container_name: game-rec-web
     ports:
       - "3000:3000"
