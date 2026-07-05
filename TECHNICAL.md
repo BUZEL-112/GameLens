@@ -69,7 +69,7 @@ The training pipeline turns the cleaned interaction table into two embedding spa
 
 ### Stage 1: User/Item Splitting
 
-The merged dataframe is separated into two independent frames: an item catalog of unique games with their genres and tags, and a user interaction table of user IDs, item names, and interaction scores. If the interaction score was not computed during preparation, this stage calculates it inline using the same `log1p` normalization described above. 
+The merged dataframe is separated into two independent frames: an item catalog of unique games with their genres and tags, and a user interaction table of user IDs, item names, and interaction scores. If the interaction score was not computed during preparation, this stage calculates it inline using the same `log1p` normalization described above.
 
 ### Stage 2: Item Processing
 
@@ -116,7 +116,7 @@ The evaluation process runs several phases after loading the saved artifacts:
 
 **Semantic consistency.** Two additional checks validate that the nearest-neighbor structure reflects real game relationships rather than spurious training artifacts. Tag Jaccard similarity measures how much tag overlap the recommended games have with the query game's tags. Co-play consistency checks whether the model's nearest neighbors for a given game are games that users historically played together. Both should be higher for model recommendations than for a random selection.
 
-Finally, the evaluation produces a set of metrics that serve as a deployment gate, which is helpful in the retraining process. The model does not go live unless it beats the popularity baseline and exceeds minimum configurable thresholds for recall and NDCG. These thresholds are defined externally in a configuration file, allowing them to be adjusted without modifying the core logic. 
+Finally, the evaluation produces a set of metrics that serve as a deployment gate, which is helpful in the retraining process. The model does not go live unless it beats the popularity baseline and exceeds minimum configurable thresholds for recall and NDCG. These thresholds are defined externally in a configuration file, allowing them to be adjusted without modifying the core logic.
 
 ---
 
@@ -125,6 +125,7 @@ Finally, the evaluation produces a set of metrics that serve as a deployment gat
 At serving time, the expensive work has already been done. Inference is mostly a Redis cache lookup, a FAISS nearest-neighbor search, and a reranking pass. The API is built with FastAPI and ensures it is fully initialized before accepting traffic, preventing the system from silently serving empty recommendations.
 
 The service exposes the following main endpoints:
+
 - `GET /v1/recommendations`: Provides personalized recommendations for a specific user (the prediction endpoint).
 - `GET /v1/items/{item_name}/similar`: Provides item-to-item recommendations based on a query game.
 - `POST /v1/events`: Ingests real-time user interactions to update features in the background.
@@ -216,6 +217,4 @@ The web UI is the final service in the chain. It is configured with a `service_h
 
 ### The Startup Contract
 
-Due populating the Redis feature store with millions of embeddings from cold storage takes time and can fail. The api startup requires starting the Redis cache first, manually hydrating it from the precomputed model artifacts, and explicitly writing the "ready" sentinel flag. Only then can the API and Web services be started, at which point they will read the sentinel flag, verify the system is fully populated, and safely begin serving live traffic.
-
-
+Populating the Redis feature store with millions of embeddings from cold storage takes time and can fail. The API startup requires starting the Redis cache first, manually hydrating it from the precomputed model artifacts, and explicitly writing the "ready" sentinel flag. Only then can the API and Web services be started, at which point they will read the sentinel flag, verify the system is fully populated, and safely begin serving live traffic.

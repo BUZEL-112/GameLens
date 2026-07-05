@@ -71,10 +71,10 @@ make setup-frontend   # boots the full stack with the Next.js UI at :3000
 
 Once up:
 
-- **API:** http://localhost:8000
-- **Swagger docs:** http://localhost:8000/docs
-- **Health:** http://localhost:8000/health
-- **Web UI:** http://localhost:3000
+- **API:** <http://localhost:8000>
+- **Swagger docs:** <http://localhost:8000/docs>
+- **Health:** <http://localhost:8000/health>
+- **Web UI:** <http://localhost:3000>
 
 To run the **full ML pipeline** instead (downloads ~1 GB raw data, trains on CPU in ~30-45 min):
 
@@ -90,7 +90,7 @@ make up
 
 **Project structure:**
 
-```
+```text
 configs/config.yaml      single source of truth: hyperparameters, paths, thresholds
 core_ml/features.py      build_user_vector - shared by training and serving (no I/O, no TF)
 training/                pipeline stages 1-6, two-tower model (train.py), evaluate.py

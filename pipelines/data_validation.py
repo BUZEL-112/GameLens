@@ -22,24 +22,28 @@ from training.utils.logger import logger
 
 def main(config_path: str = "configs/config.yaml"):
     config = load_config(config_path)
-    manifest_dir = config.get("orchestration", {}).get("manifest_dir", "model_artifacts/manifests")
-    
+    manifest_dir = config.get("orchestration", {}).get(
+        "manifest_dir", "model_artifacts/manifests"
+    )
+
     retention_manifest_path = os.path.join(manifest_dir, "retention_manifest.json")
-    
+
     logger.info("=== Data Validation Pipeline ===")
-    
+
     if not os.path.exists(retention_manifest_path):
-        raise FileNotFoundError(f"Missing retention manifest at {retention_manifest_path}")
-        
+        raise FileNotFoundError(
+            f"Missing retention manifest at {retention_manifest_path}"
+        )
+
     with open(retention_manifest_path, "r") as f:
         retention_data = json.load(f)
-        
+
     archive_path = retention_data.get("archive_path")
     expected_rows = retention_data.get("events_archived", 0)
-    
+
     is_valid = False
     error_msg = None
-    
+
     if expected_rows > 0 and archive_path:
         logger.info(f"Validating archive: {archive_path}")
         if not os.path.exists(archive_path):
@@ -60,7 +64,7 @@ def main(config_path: str = "configs/config.yaml"):
     else:
         logger.info("No events were archived in the previous run. Nothing to validate.")
         is_valid = True  # valid because there was nothing to do
-        
+
     if not is_valid:
         logger.error(f"Validation FAILED: {error_msg}")
         raise RuntimeError(f"Data validation failed: {error_msg}")
@@ -72,7 +76,7 @@ def main(config_path: str = "configs/config.yaml"):
         "archive_path": archive_path,
         "expected_rows": expected_rows,
     }
-    
+
     os.makedirs(manifest_dir, exist_ok=True)
     with open(os.path.join(manifest_dir, "validation_manifest.json"), "w") as f:
         json.dump(manifest, f, indent=2)
