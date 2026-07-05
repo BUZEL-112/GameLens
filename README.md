@@ -1,132 +1,175 @@
 # GameLens
 
-A two-tower retrieval recommender for Steam games. The system mirrors how a production recommendation pipeline is structured end to end: a training pipeline that produces versioned artifacts, a FastAPI serving layer with cache-first lookups and a documented cold-start path, an online feature-refresh loop, and a retraining DAG with deployment gates and A/B routing. This is a personal project trained on the public UCSD Steam dataset; the demo path runs on a 10% sample for fast iteration.
+**A production-style, two-tower retrieval recommender for Steam games - trained, served, and orchestrated end to end.**
 
 ---
 
-## Architecture
+## Description
 
-```
-gamelens/
-├── configs/
-│   └── config.yaml              single source of truth for hyperparameters, paths, thresholds
-├── core_ml/
-│   └── features.py              build_user_vector -- shared by training and serving, no I/O, no TF
-├── training/
-│   ├── pipeline.py              stages 1-6: clean, feature engineer, split, train, evaluate, export
-│   ├── train.py                 two-tower model definition and in-batch InfoNCE training loop
-│   └── evaluate.py              writes Recall@20 / NDCG@20 + baseline check into metrics.json
-├── artifacts/
-│   ├── u_tower.keras            user tower weights
-│   ├── i_tower.keras            item tower weights
-│   ├── item_embeddings.npy      precomputed item embedding matrix
-│   ├── item_index.faiss         flat FAISS index over item embeddings
-│   └── artifacts.pkl            serialized artifact bundle consumed by init_redis and the API
-├── scripts/
-│   └── init_redis.py            one-time bulk load of artifacts.pkl into Redis
-├── recommendation_api/
-│   └── services/
-│       ├── retrieval.py         3-tier embedding lookup (cache -> tower -> cold-start fallback)
-│       ├── reranking.py         filter played, genre diversity cap, context boost
-│       └── nearline.py          daemon thread consuming events:stream, refreshes user embeddings
-├── pipelines/
-│   ├── orchestrator.py          Prefect DAG: retention, validation, retrain, eval, deploy, A/B
-│   └── ab_testing.py            experiment routing and metric recording (flat JSON state)
-├── gamelens-web/                Next.js frontend, proxies /rec/* to the API
-├── tests/
-│   └── test_feature_parity.py   pins build_user_vector against a frozen reference implementation
-└── e2e_test.py                  artifact integrity checks + live-API smoke test via TestClient
+GameLens takes the full lifecycle of a real recommendation system and puts it in one repo. It covers an offline training pipeline that produces versioned model artifacts, a low-latency FastAPI serving layer with cache-first lookups and a documented cold-start path, an online feature-refresh loop, a Prefect retraining DAG with deployment gates and A/B routing, and a Next.js frontend.
+
+It is a personal project trained on the public UCSD Steam dataset. The demo path runs on a 10% sample so you can boot the whole thing in minutes without a GPU.
+
+Two neural towers -- a **User Tower** and an **Item Tower** -- are trained jointly with in-batch InfoNCE so that a user embedding and an item embedding can be compared with a simple dot product. Because both towers end in L2 normalization, that dot product *is* cosine similarity.
+
+- **Item embeddings** are precomputed once per training run and stored in a flat FAISS index (`item_index.faiss`, `IndexFlatIP`).
+- **User embeddings** are computed on demand from a user's feature vector and cached in Redis.
+- Serving = "embed the user -> FAISS nearest-neighbor search over items -> re-rank -> return."
+
+```mermaid
+graph TD
+    subgraph "Offline (Training)"
+        A["training/pipeline.py"] --> B["model_artifacts/ (u_tower, i_tower, item_index.faiss, artifacts.pkl)"]
+    end
+    subgraph "Online (Serving)"
+        B --> C["scripts/init_redis.py"]
+        C --> D["Redis feature store"]
+        E["recommendation_api (FastAPI + FAISS)"] --- D
+        F["gamelens-web (Next.js)"] --- E
+    end
+    subgraph "Orchestration"
+        G["pipelines/orchestrator.py (Prefect DAG)"] --> A
+    end
 ```
 
-The two towers are trained jointly with in-batch InfoNCE, so any user/item embedding dot product is directly usable as a ranking score. Item embeddings are precomputed once per training run and written to a FAISS flat index; user embeddings are computed on demand and cached in Redis.
+---
+
+## Features
+
+- **Personalized recommendations** -- given a `user_id`, return games ranked for that user.
+- **Item-to-item similarity** -- given a game, return the most similar games (no user profile needed).
+- **Learns online** -- user interactions (clicks, purchases, playtime) refresh that user's embedding within seconds.
+- **Retrains safely** -- a scheduled DAG retrains, evaluates against quality gates, and only promotes a model that beats a popularity baseline.
+
+Key design decisions:
+
+- **One feature function, two call sites, one test.** `core_ml/features.py:build_user_vector()` is called from both training (Stage 3, batch) and the online `nearline.py` updater (per event). `tests/test_feature_parity.py` pins it against a frozen reference, so a refactor that silently changes the math fails a test instead of degrading live recommendations. This is the actual fix for training-serving skew.
+- **Redis is gated by a readiness sentinel.** The API refuses to boot unless a `system:ready` key exists (written at the end of `init_redis`), rather than serving empty recommendations. The same key backs Docker Compose's `depends_on: service_healthy` for the frontend.
+- **Retrieval fails soft in three tiers.** Cached embedding -> recompute from stored features via the User Tower -> cold-start popularity fallback. Cold start is a normal UX event, not a 500.
+- **The retraining DAG has gates, not just steps.** Deployment only happens if the new model beats a popularity baseline and clears absolute Recall@20 / NDCG@20 thresholds from `config.yaml`. Thresholds live in config, not code.
 
 ---
 
-## Design Decisions
+## Tech Stack
 
-**One feature function, two call sites, one test pinning them together.**
-`core_ml/features.py` has no I/O and no TensorFlow dependency. `build_user_vector()` is called from `training/pipeline.py` (Stage 3, batch, full corpus) and from `recommendation_api/services/nearline.py` (online, one user at a time, per event). This is the actual fix for training-serving skew. `tests/test_feature_parity.py` freezes a reference implementation and asserts the shared function still matches it, so a refactor that quietly changes the math fails a test instead of silently degrading live recommendations.
-Tradeoff accepted: the online path cannot apply corpus-level normalization (the last two vector dimensions are scaled against the global max across all users), because at serving time only one user's data is available. The nearline updater skips that step and documents why in its docstring.
-
-**Redis is gated behind a readiness sentinel, not a connection check.**
-The API's startup sequence checks for a `system:ready` key written at the end of `populate_from_artifacts()`. If it is missing, the app refuses to start with an explicit pointer to `python -m scripts.init_redis`, rather than booting and serving empty recommendations until someone notices. The same key backs Docker Compose's `depends_on: condition: service_healthy` for the frontend -- there is no window where the UI is live against a half-populated backend.
-
-**Retrieval fails soft in three tiers, not with a 500.**
-`RetrievalService.get_user_embedding()` checks a cached embedding in Redis, falls back to a stored feature vector run through the User Tower on a cache miss, and returns `None` only on a genuine cold start. Cold start is not an error: the API responds with a popularity-ranked list (`source: "popularity_fallback"`) and the frontend renders nothing rather than an error state, since a missing recommendation row is a UX non-event.
-
-**The retraining DAG has gates, not just steps.**
-`pipelines/orchestrator.py` runs Retention -> Validation -> Retraining -> Evaluation -> Deployment -> A/B Routing as a Prefect flow. The deployment task checks that the new model beats a popularity baseline and clears absolute Recall@20 / NDCG@20 thresholds from `config.yaml` (`training/evaluate.py` writes both checks into `metrics.json`). A model that overfits without beating "recommend the top 50 games" never reaches production, and the thresholds live in config rather than code.
-
-**The chronological ordering assumption is documented, not hidden.**
-`max_interactions_per_user` uses `.groupby("user_id").tail(N)`, treating row order as a proxy for chronological order because the public dataset carries no timestamps. This assumption is called out in `CONTRIBUTING.md`, in the function docstring, and in `training_manifest.json`'s `sampling.note` field -- because it is invisible until someone retrains on a differently-ordered dump and gets a confusing metric shift.
-
-**Two onboarding paths share one artifact contract.**
-`make setup-api` downloads artifacts trained on a 10% sample (explicitly labeled "not for production" in both the Makefile and the docs), putting a backend or frontend engineer against a real API in under five minutes without a GPU. `make setup-ml` runs the full pipeline. Both produce an `artifacts.pkl` with the identical schema, so nothing downstream needs to know which path ran.
+TensorFlow / Keras + FAISS (model) · FastAPI + Pydantic v2 + Redis (serving) · Prefect (orchestration) · Next.js + Tailwind (frontend) · Docker Compose (infra).
 
 ---
 
-## Quickstart
+## Installation
 
 The fast path uses pre-built demo artifacts and skips training entirely.
 
 ```bash
 git clone https://github.com/BUZEL-112/GameLens.git && cd GameLens
 pip install -r requirements.txt
-make setup-api          # downloads demo artifacts, starts Redis (~5 min)
-make test               # parity + smoke tests against the live API
-make setup-frontend     # boots the full stack with the Next.js UI
+
+make setup-api        # download demo artifacts + start Redis + populate it (~5 min, no GPU)
+make test             # parity + smoke tests against the live API
+make setup-frontend   # boots the full stack with the Next.js UI at :3000
 ```
 
-To run the full ML pipeline instead (downloads ~1 GB of raw data, trains on CPU in roughly 30-45 min):
+Once up:
+
+- **API:** http://localhost:8000
+- **Swagger docs:** http://localhost:8000/docs
+- **Health:** http://localhost:8000/health
+- **Web UI:** http://localhost:3000
+
+To run the **full ML pipeline** instead (downloads ~1 GB raw data, trains on CPU in ~30-45 min):
 
 ```bash
 make setup-ml
 ```
 
-Environment variables, the Redis key schema, and stage-by-stage pipeline internals are in `CONTRIBUTING.md`.
+To bring up the entire production-like stack (redis + api + web) in Docker:
 
----
+```bash
+make up
+```
 
-## Project Structure
+**Project structure:**
 
 ```
-configs/config.yaml      single source of truth for hyperparameters, paths, thresholds
-core_ml/                 feature logic shared between training and serving (no I/O, no TF)
-training/                pipeline stages 1-6, model definitions, train.py, evaluate.py
-recommendation_api/      FastAPI app -- routers, retrieval/reranking/nearline services, Redis
-pipelines/               Prefect DAG -- retention, validation, retrain, A/B routing
+configs/config.yaml      single source of truth: hyperparameters, paths, thresholds
+core_ml/features.py      build_user_vector - shared by training and serving (no I/O, no TF)
+training/                pipeline stages 1-6, two-tower model (train.py), evaluate.py
+recommendation_api/      FastAPI app: routers, retrieval/reranking/nearline services, Redis store
+pipelines/               Prefect DAG (orchestrator.py) + A/B routing (ab_testing.py)
 scripts/init_redis.py    one-time bulk load of artifacts.pkl into Redis
 gamelens-web/            Next.js frontend, proxies /rec/* to the API
-tests/                   parity test pinning core_ml.features against a frozen reference
-e2e_test.py              artifact integrity check + live-API smoke test
+tests/                   feature-parity test pinning core_ml.features to a frozen reference
+e2e_test.py              artifact integrity checks + live-API smoke test via TestClient
 ```
 
 ---
 
-## Stack
+## Configuration
 
-Model: TensorFlow / Keras, FAISS | Serving: FastAPI, Pydantic v2, Redis | Orchestration: Prefect | Frontend: Next.js, Tailwind CSS | Infrastructure: Docker Compose
+Everything is centralized in `configs/config.yaml`. Notable knobs:
+
+- **Model:** `embedding_dim: 128`, `temperature: 0.1`, `batch_size: 512`, `epochs: 100`.
+- **Sampling:** `sample_fraction: 0.1` (demo scale), `max_interactions_per_user: 20`.
+- **Deployment gates:** `min_recall_20: 0.15`, `min_ndcg_20: 0.05`.
+- **Serving:** `n_candidates: 100`, `max_genres_per_response: 3`.
+
+Serving-related env vars (see `docker-compose.yml`): `REDIS_HOST`, `REDIS_PORT`, `REDIS_DB`, `ARTIFACTS_PATH`, `API_KEY`.
+
+---
+
+## Usage
+
+All `/v1/*` routes require an `X-API-Key` header matching the server's configured key (default `dev-insecure-key`). `/health`, `/docs`, `/openapi.json`, and `/redoc` are exempt.
+
+### `GET /v1/recommendations`
+
+Personalized or item-to-item recommendations.
+
+| Param | Type | Default | Notes |
+| :-- | :-- | :-- | :-- |
+| `user_id` | string | (required) | The user to recommend for. |
+| `count` | int | 20 | 1-100. |
+| `context` | enum | `homepage` | e.g. `cart` triggers a contextual boost in reranking. |
+| `item_name` | string | none | If set, switches to **item-to-item** mode. |
+
+Behavior:
+
+- `item_name` present -> item-to-item similarity (no user profile needed).
+- Known user -> Two-Tower retrieval + reranking (`source: "model"`).
+- Unknown user -> popularity fallback (`source: "popularity_fallback"`), not an error.
+
+Response (`RecommendationResponse`): a list of `{item_name, score, reason, boosted}` plus `source`, `model_version`, and `latency_ms`.
+
+### `POST /v1/events`
+
+Record a user interaction (`click`, `purchase`, `playtime`, `add_to_cart`). Returns `202` immediately; the nearline updater refreshes the user's embedding asynchronously.
+
+### `GET /v1/items/{item_name}/similar`
+
+Top-N most similar games to a given game.
+
+### `GET /v1/items/search?q=...`
+
+Discover exact item names in the vocabulary (handy since recommendations key on human-readable titles).
 
 ---
 
 ## Testing
 
-- `tests/test_feature_parity.py` -- freezes the feature math and asserts the shared `build_user_vector` function still matches it. This is the test that matters: it catches the one failure mode that would silently degrade live recommendations without surfacing any other error.
-- `e2e_test.py` -- checks embedding shapes and L2 norms in the saved artifacts, then runs a live smoke test against the FastAPI app via `TestClient`. API checks are skipped gracefully if Redis is not running so they do not block a pure offline run.
+```bash
+make test       # end-to-end: artifact shape/L2-norm checks + a live-API smoke test via TestClient
+make test-unit  # API + training unit tests, no Docker required
+```
+
+Known limitations:
+
+- Demo artifacts are a **10% sample** -- recommendation quality at that scale is a structural-validity check, not a relevance benchmark.
+- The in-memory rate limiter is single-process; a multi-worker deployment needs the Redis `INCR`+`EXPIRE` swap noted in `core/security.py`.
+- A/B experiment state lives in flat JSON files -- safe on one machine, not under concurrent writers.
+- No frontend auth; user identity is a client-generated UUID in `localStorage`.
 
 ---
 
-## Known Limitations
+## License
 
-- Demo artifacts are a 10% sample -- recommendation quality at that scale is a structural-validity check, not a relevance benchmark.
-- `_InMemoryRateLimiter` (`core/security.py`) is a single-process sliding window; a multi-worker deployment needs the Redis `INCR`+`EXPIRE` swap noted in the same file.
-- A/B experiment state lives in flat JSON files (`pipelines/ab_testing.py`) -- safe on one machine, not safe under concurrent writers.
-- No authentication on the frontend; user identity is a client-generated UUID in `localStorage`.
-
----
-
-## Possible Next Steps
-
-- Move A/B experiment state from JSON files to Redis so `record_metric` is safe under concurrent writers.
-- Add a sequence-aware candidate generator alongside the two-tower model and route a traffic slice through the existing experiment framework.
-- Replace the `.tail(N)` chronological proxy with real timestamps if a richer Steam dataset becomes available.
+This project is for personal and educational use. See the repository for details.
