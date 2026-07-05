@@ -1,5 +1,6 @@
 # Core ML / Data
-numpy>=1.26
+# numpy>=1.26
+numpy>=2.0.0
 pandas>=2.1
 scikit-learn>=1.3
 tensorflow>=2.15
