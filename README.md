@@ -56,7 +56,7 @@ TensorFlow / Keras + FAISS (model) · FastAPI + Pydantic v2 + Redis (serving) ·
 
 ---
 
-## Installation
+## Quickstart
 
 The fast path uses pre-built demo artifacts and skips training entirely.
 
@@ -152,6 +152,31 @@ Top-N most similar games to a given game.
 
 Discover exact item names in the vocabulary (handy since recommendations key on human-readable titles).
 
+### Examples
+
+**Get personalized recommendations for a user:**
+
+```bash
+curl -X GET "http://localhost:8000/v1/recommendations?user_id=76561197970982479&count=5" \
+     -H "X-API-Key: dev-insecure-key"
+```
+
+**Get games similar to Counter-Strike:**
+
+```bash
+curl -X GET "http://localhost:8000/v1/items/Counter-Strike/similar" \
+     -H "X-API-Key: dev-insecure-key"
+```
+
+**Record a play event:**
+
+```bash
+curl -X POST "http://localhost:8000/v1/events" \
+     -H "X-API-Key: dev-insecure-key" \
+     -H "Content-Type: application/json" \
+     -d '{"user_id": "76561197970982479", "item_name": "Portal 2", "event_type": "playtime", "value": 120}'
+```
+
 ---
 
 ## Testing
@@ -172,4 +197,4 @@ Known limitations:
 
 ## License
 
-This project is for personal and educational use. See the repository for details.
+Source code is licensed under the [MIT License](./LICENSE).
