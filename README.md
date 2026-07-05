@@ -8,31 +8,6 @@
 
 GameLens takes the full lifecycle of a real recommendation system and puts it in one repo. It covers an offline training pipeline that produces versioned model artifacts, a low-latency FastAPI serving layer with cache-first lookups and a documented cold-start path, an online feature-refresh loop, a Prefect retraining DAG with deployment gates and A/B routing, and a Next.js frontend.
 
-It is a personal project trained on the public UCSD Steam dataset. The demo path runs on a 10% sample so you can boot the whole thing in minutes without a GPU.
-
-Two neural towers -- a **User Tower** and an **Item Tower** -- are trained jointly with in-batch InfoNCE so that a user embedding and an item embedding can be compared with a simple dot product. Because both towers end in L2 normalization, that dot product *is* cosine similarity.
-
-- **Item embeddings** are precomputed once per training run and stored in a flat FAISS index (`item_index.faiss`, `IndexFlatIP`).
-- **User embeddings** are computed on demand from a user's feature vector and cached in Redis.
-- Serving = "embed the user -> FAISS nearest-neighbor search over items -> re-rank -> return."
-
-```mermaid
-graph TD
-    subgraph "Offline (Training)"
-        A["training/pipeline.py"] --> B["model_artifacts/ (u_tower, i_tower, item_index.faiss, artifacts.pkl)"]
-    end
-    subgraph "Online (Serving)"
-        B --> C["scripts/init_redis.py"]
-        C --> D["Redis feature store"]
-        E["recommendation_api (FastAPI + FAISS)"] --- D
-        F["gamelens-web (Next.js)"] --- E
-    end
-    subgraph "Orchestration"
-        G["pipelines/orchestrator.py (Prefect DAG)"] --> A
-    end
-```
-
----
 
 ## Features
 
@@ -41,14 +16,8 @@ graph TD
 - **Learns online** -- user interactions (clicks, purchases, playtime) refresh that user's embedding within seconds.
 - **Retrains safely** -- a scheduled DAG retrains, evaluates against quality gates, and only promotes a model that beats a popularity baseline.
 
-Key design decisions:
 
-- **One feature function, two call sites, one test.** `core_ml/features.py:build_user_vector()` is called from both training (Stage 3, batch) and the online `nearline.py` updater (per event). `tests/test_feature_parity.py` pins it against a frozen reference, so a refactor that silently changes the math fails a test instead of degrading live recommendations. This is the actual fix for training-serving skew.
-- **Redis is gated by a readiness sentinel.** The API refuses to boot unless a `system:ready` key exists (written at the end of `init_redis`), rather than serving empty recommendations. The same key backs Docker Compose's `depends_on: service_healthy` for the frontend.
-- **Retrieval fails soft in three tiers.** Cached embedding -> recompute from stored features via the User Tower -> cold-start popularity fallback. Cold start is a normal UX event, not a 500.
-- **The retraining DAG has gates, not just steps.** Deployment only happens if the new model beats a popularity baseline and clears absolute Recall@20 / NDCG@20 thresholds from `config.yaml`. Thresholds live in config, not code.
 
----
 
 ## Tech Stack
 
